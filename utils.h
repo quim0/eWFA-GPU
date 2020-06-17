@@ -38,7 +38,7 @@
 #define CLOCK_STOP(text) \
     clock_gettime(CLOCK_REALTIME, &now); \
     seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9)); \
-    DEBUG("%s wall time %fs", text, seconds);
+    DEBUG("%s Wall time %fs", text, seconds);
 #else
 #define DEBUG(fmt, ...)
 #define CLOCK_INIT()
@@ -55,9 +55,7 @@
     WF_ERROR(__VA_ARGS__); fflush(stdout); fflush(stderr); exit(1); \
     }
 
-
-
-
+// TODO: Method to free the sequences memory
 class SequenceReader {
 public:
     char *seq_file;

@@ -65,8 +65,22 @@ bool SequenceReader::read_sequences () {
 
     if (this->sequences == NULL) this->initialize_sequences();
 
+    // Buffer to temporary allocate each line
     size_t buf_size = this->sequence_buffer_size();
     SEQ_TYPE* buf = this->create_sequence_buffer();
+
+    // Big chunk of memory where all the sequences will be stored
+    // The final nullbyte WILL NOT be stored as we already know the string size
+    // num_sequences is the number of sequences pairs (pattern/text), so it's
+    // nedded to double the space required.
+    SEQ_TYPE* seq_alloc = (SEQ_TYPE*)calloc(
+                                     this->num_sequences * (this->seq_len) * 2,
+                                     sizeof(SEQ_TYPE)
+                                     );
+    if (seq_alloc == NULL)
+        WF_FATAL(NOMEM_ERR_STR);
+    DEBUG("Allocating memory to store text/patterns on host (%zu bytes)",
+          this->num_sequences * (this->seq_len) * 2 * sizeof(SEQ_TYPE));
 
     bool retval = true;
 
@@ -81,6 +95,9 @@ bool SequenceReader::read_sequences () {
         uint32_t elem_idx = idx % 2;
 
         WF_element *curr_elem = &(this->sequences[sequence_idx]);
+        // Pointer where the current sequence will be allocated in the big
+        // memory chunck
+        SEQ_TYPE* curr_seq_ptr = seq_alloc + idx * this->seq_len;
 
         if (elem_idx == 0) {
             // First element of the sequence (TEXT)
@@ -92,9 +109,8 @@ bool SequenceReader::read_sequences () {
                 break;
             }
             // +1 to avoid the '>' character
-            curr_elem->text = strndup(buf + 1, buf_size - 1);
-            if (curr_elem->text == NULL) 
-                WF_FATAL(NOMEM_ERR_STR)
+            memcpy(curr_seq_ptr, buf + 1, this->seq_len * sizeof(SEQ_TYPE));
+            curr_elem->text = curr_seq_ptr;
         } else if (elem_idx == 1) {
             // Second element of the sequence (PATTERN)
             if (buf[0] != '<') {
@@ -105,9 +121,8 @@ bool SequenceReader::read_sequences () {
                 break;
             }
             // +1 to avoid the '<' character
-            curr_elem->pattern = strndup(buf + 1, buf_size - 1);
-            if (curr_elem->pattern == NULL)
-                WF_FATAL(NOMEM_ERR_STR)
+            memcpy(curr_seq_ptr, buf + 1, this->seq_len * sizeof(SEQ_TYPE));
+            curr_elem->pattern= curr_seq_ptr;
         }
         curr_elem->len = this->seq_len;
         idx++;

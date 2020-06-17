@@ -23,7 +23,6 @@
 #include "wavefront.h"
 
 // TODO: Check max_gpu_size to take in accont the multiple arrays stored on GPU
-// TODO: Is not necessary to store the nullbyte
 bool Sequences::GPU_memory_init () {
     CLOCK_INIT()
     // Send patterns to GPU
@@ -42,25 +41,41 @@ bool Sequences::GPU_memory_init () {
     // Allocate a big chunk of memory only once for the different patterns and
     // texts
     uint8_t* base_ptr;
-    // +1 because the nullbyte
-    size_t seq_size_bytes = this->sequence_len * sizeof(SEQ_TYPE) + 1;
+    size_t seq_size_bytes = this->sequence_len * sizeof(SEQ_TYPE);
     // *2 sequences per element (pattern and text)
     cudaMalloc((void **) &(base_ptr),
                (seq_size_bytes * 2) * this->num_elements);
     CUDA_CHECK_ERR;
+    DEBUG("Allocating memory to store text/patterns on device (%zu bytes)",
+          seq_size_bytes * 2 * this->num_elements);
+
+    // Copy all the secuences to the fresh allocated memory on GPU
+    cudaMemcpy(base_ptr, this->elements[0].text,
+               (seq_size_bytes * 2) * this->num_elements,
+               cudaMemcpyHostToDevice);
+    CUDA_CHECK_ERR;
+
+    // TODO: Create tmp array of elements in host and do just on memcpy
+    // Create a temporary array o WF_elements in host memory, store all the
+    // device pointers here and then do a single memcpy. This is done to avoid
+    // doing a cudaMemcpy on each iteration of the loop, which dramatically
+    // drops the performance.
+    WF_element *tmp_wf_elements_host = (WF_element*)
+                                calloc(this->num_elements, sizeof(WF_element));
 
     // += 2 because every element have two sequences (pattern and text)
     for (int i=0; i<this->num_elements; i += 2) {
-        WF_element tmp_host_elem = {0};
+        WF_element *tmp_host_elem = &tmp_wf_elements_host[i / 2];
         SEQ_TYPE* seq1 = (SEQ_TYPE*)(base_ptr + i * seq_size_bytes);
         SEQ_TYPE* seq2 = (SEQ_TYPE*)(base_ptr + (i + 1) * seq_size_bytes);
-        tmp_host_elem.text = seq1;
-        tmp_host_elem.pattern = seq2;
-        tmp_host_elem.len = this->sequence_len;
-        cudaMemcpy(&this->d_elements[i / 2], &tmp_host_elem,
-                   sizeof(WF_element), cudaMemcpyHostToDevice);
-        CUDA_CHECK_ERR;
+        tmp_host_elem->text = seq1;
+        tmp_host_elem->pattern = seq2;
+        tmp_host_elem->len = this->sequence_len;
     }
+    cudaMemcpy(this->d_elements, tmp_wf_elements_host,
+               this->num_elements * sizeof(WF_element), cudaMemcpyHostToDevice);
+    CUDA_CHECK_ERR;
+    free(tmp_wf_elements_host);
 
 #ifdef DEBUG_MODE
     size_t total_memory  = req_memory + seq_size_bytes * 2 * this->num_elements;
