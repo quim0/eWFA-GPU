@@ -20,19 +20,129 @@
  */
 
 #include "utils.h"
-#include "wavefront.cuh"
+#include "wavefront.h"
 
-bool Wavefronts::GPU_memory_init () {
-    size_t req_memory = this->num_elements * sizeof(this->WF_element);
+// TODO: Check max_gpu_size to take in accont the multiple arrays stored on GPU
+// TODO: Is not necessary to store the nullbyte
+bool Sequences::GPU_memory_init () {
+    CLOCK_INIT()
+    // Send patterns to GPU
+    size_t req_memory = this->num_elements * sizeof(WF_element);
     if (req_memory > MAX_GPU_SIZE) {
-        std::cout << "Required memory is bigger than available memory in GPU" << std::endl;
+        WF_ERROR("Required memory is bigger than available memory in GPU");
         return false;
     }
 
+    // Start the clock for benchmanrk purposes if DEBUG_MODE is enabled
+    CLOCK_START()
+
     cudaMalloc((void **) &(this->d_elements), req_memory);
     CUDA_CHECK_ERR;
-    cudaMemcpy(this->d_elements, this->elements, req_memory, cudaMemcpyHostToDevice);
+
+    // Allocate a big chunk of memory only once for the different patterns and
+    // texts
+    uint8_t* base_ptr;
+    // +1 because the nullbyte
+    size_t seq_size_bytes = this->sequence_len * sizeof(SEQ_TYPE) + 1;
+    // *2 sequences per element (pattern and text)
+    cudaMalloc((void **) &(base_ptr),
+               (seq_size_bytes * 2) * this->num_elements);
     CUDA_CHECK_ERR;
-    DEBUG("GPU memory initialized, %d bytes used.", req_memory)
+
+    // += 2 because every element have two sequences (pattern and text)
+    for (int i=0; i<this->num_elements; i += 2) {
+        WF_element tmp_host_elem = {0};
+        SEQ_TYPE* seq1 = (SEQ_TYPE*)(base_ptr + i * seq_size_bytes);
+        SEQ_TYPE* seq2 = (SEQ_TYPE*)(base_ptr + (i + 1) * seq_size_bytes);
+        tmp_host_elem.text = seq1;
+        tmp_host_elem.pattern = seq2;
+        tmp_host_elem.len = this->sequence_len;
+        cudaMemcpy(&this->d_elements[i / 2], &tmp_host_elem,
+                   sizeof(WF_element), cudaMemcpyHostToDevice);
+        CUDA_CHECK_ERR;
+    }
+
+#ifdef DEBUG_MODE
+    size_t total_memory  = req_memory + seq_size_bytes * 2 * this->num_elements;
+    DEBUG("GPU pattern/text memory initialized, %zu MiB used.",
+          total_memory / (1 << 20));
+    CLOCK_STOP("GPU pattern/text memory initializaion.")
+#endif
+
+    // Start the clock for benchmark in DEBUG_MODE
+    CLOCK_START()
+
+    // Create offsets into the GPU
+    req_memory = this->num_elements * sizeof(edit_wavefronts_t);
+    if (req_memory > MAX_GPU_SIZE) {
+        WF_ERROR("Required memory is bigger than available memory in GPU");
+        return false;
+    }
+    cudaMalloc((void **) &(this->d_wavefronts), req_memory);
+    CUDA_CHECK_ERR;
+    cudaMemset((void *) this->d_wavefronts, 0, req_memory);
+    CUDA_CHECK_ERR;
+
+    size_t offset_size = 2 * this->max_distance * sizeof(ewf_offset_t);
+    for (int i=0; i<this->num_elements; i++) {
+        // A temporary CPU edit_wavefront_t is needed. As we can not access
+        // pointers inside GPU, the cudaMalloc result is saved on host RAM, and
+        // then sent to device.
+        edit_wavefront_t tmp_host_wf = {0};
+        cudaMalloc((void **) &(tmp_host_wf.offsets), offset_size);
+        CUDA_CHECK_ERR;
+        cudaMemcpy(&this->d_wavefronts[i].wavefront, &tmp_host_wf,
+                   sizeof(edit_wavefront_t), cudaMemcpyHostToDevice);
+        CUDA_CHECK_ERR;
+        cudaMalloc((void **) &(tmp_host_wf.offsets), offset_size);
+        CUDA_CHECK_ERR;
+        cudaMemcpy(&this->d_wavefronts[i].next_wavefront, &tmp_host_wf,
+                   sizeof(edit_wavefront_t), cudaMemcpyHostToDevice);
+        CUDA_CHECK_ERR;
+    }
+
+#ifdef DEBUG_MODE
+    total_memory = req_memory + offset_size * this->num_elements * 2;
+    DEBUG("GPU offsets memory initialized, %zu MiB used.", total_memory / (1 << 20));
+    CLOCK_STOP("GPU offsets memory initialization.")
+#endif
+
+    return true;
+}
+
+bool Sequences::GPU_memory_free () {
+    DEBUG("Freeing GPU memory.");
+    CLOCK_INIT()
+    CLOCK_START()
+    // Free all the texts/patterns
+    WF_element tmp_host_elem = {0};
+    cudaMemcpy(&tmp_host_elem, this->d_elements,
+               sizeof(WF_element), cudaMemcpyDeviceToHost);
+    CUDA_CHECK_ERR;
+    cudaFree(tmp_host_elem.text);
+    CUDA_CHECK_ERR;
+    cudaFree(this->d_elements);
+    CUDA_CHECK_ERR;
+
+    CLOCK_STOP("Text/patterns GPU memory freed.")
+
+    // Free all the offsets
+    for (int i=0; i<this->num_elements; i++) {
+        edit_wavefront_t tmp_host_wf = {0};
+        cudaMemcpy(&tmp_host_wf, &this->d_wavefronts[i].wavefront,
+                   sizeof(edit_wavefront_t), cudaMemcpyDeviceToHost);
+        CUDA_CHECK_ERR;
+        cudaFree(tmp_host_wf.offsets);
+        CUDA_CHECK_ERR;
+        cudaMemcpy(&tmp_host_wf, &this->d_wavefronts[i].next_wavefront,
+                   sizeof(edit_wavefront_t), cudaMemcpyDeviceToHost);
+        CUDA_CHECK_ERR;
+        cudaFree(tmp_host_wf.offsets);
+        CUDA_CHECK_ERR;
+    }
+    cudaFree(d_wavefronts);
+    CUDA_CHECK_ERR;
+
+    DEBUG("GPU memory freed.")
     return true;
 }

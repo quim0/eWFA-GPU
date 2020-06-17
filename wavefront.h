@@ -19,8 +19,8 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef WAVEFRONT_CUH
-#define WAVEFRONT_CUH
+#ifndef WAVEFRONT_H
+#define WAVEFRONT_H
 
 #include <cuda.h>
 #include "cuda_helpers.cuh"
@@ -28,7 +28,7 @@
 #define SEQ_TYPE char
 
 // Limit to 8GiB to be safe
-#define MAX_GPU_SIZE 1 << 33
+#define MAX_GPU_SIZE (1L << 33)
 
 typedef int16_t ewf_offset_t;
 
@@ -38,6 +38,11 @@ struct edit_wavefront_t {
     ewf_offset_t* offsets;
 };
 
+struct edit_wavefronts_t {
+    edit_wavefront_t wavefront;
+    edit_wavefront_t next_wavefront;
+};
+
 struct WF_element {
     SEQ_TYPE* text;
     SEQ_TYPE* pattern;
@@ -45,19 +50,29 @@ struct WF_element {
     size_t len;
 };
 
-class Wavefronts {
+class Sequences {
 public:
     // Array of WF_element type containing all the elements to be computed.
     WF_element* elements;
     // Same but address on GPU
     WF_element* d_elements;
-    // Length of the previous arrays
+    // Length of the previous arrays (number of sequences to compute in parallel)
     size_t num_elements;
 
-    Wavefronts (WF_element* e, size_t num_e) : elements(e), num_elements(num_e) {};
+    size_t max_distance;
+    size_t sequence_len;
+
+    // Wavefront information on GPU
+    edit_wavefronts_t* d_wavefronts;
+
+    Sequences (WF_element* e, size_t num_e, size_t seq_len) : \
+                                                elements(e), \
+                                                num_elements(num_e), \
+                                                sequence_len(seq_len), \
+                                                max_distance(seq_len * 2) {}
 
     bool GPU_memory_init ();
     bool GPU_memory_free ();
 };
 
-#endif // Header guard WAVEFRONT_CUH
+#endif // Header guard WAVEFRONT_H

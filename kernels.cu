@@ -19,7 +19,7 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "wavefront.cuh"
+#include "wavefront.h"
 
 __global__ void WF_extend(WF_element* elements) {
     WF_element* element = elements[blockIdx.x];
