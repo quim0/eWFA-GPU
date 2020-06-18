@@ -114,8 +114,8 @@ bool Sequences::GPU_memory_init () {
 
     // += 2 because every element have two offsets (wavefront and next_wavefront)
     for (int i=0; i<(this->num_elements * 2); i += 2) {
-        ewf_offset_t *offset1 = (ewf_offset_t*)(base_ptr + i * offset_size_bytes);
-        ewf_offset_t *offset2 = (ewf_offset_t*)(base_ptr + (i + 1) * offset_size_bytes);
+        ewf_offset_t *offset1 = (ewf_offset_t*)(base_ptr + i * offset_size_bytes + this->max_distance);
+        ewf_offset_t *offset2 = (ewf_offset_t*)(base_ptr + (i + 1) * offset_size_bytes + this->max_distance);
         edit_wavefronts_t *curr_host_wf = &(tmp_host_wavefronts[i/2]);
         curr_host_wf->wavefront.offsets = offset1;
         curr_host_wf->next_wavefront.offsets = offset2;
@@ -158,7 +158,7 @@ bool Sequences::GPU_memory_free () {
     cudaMemcpy(&tmp_host_wf, &this->d_wavefronts[0].wavefront,
                sizeof(edit_wavefront_t), cudaMemcpyDeviceToHost);
     CUDA_CHECK_ERR;
-    cudaFree(tmp_host_wf.offsets);
+    cudaFree(tmp_host_wf.offsets - this->max_distance);
     CUDA_CHECK_ERR;
     cudaFree(d_wavefronts);
     CUDA_CHECK_ERR;
