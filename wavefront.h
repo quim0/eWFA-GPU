@@ -30,6 +30,9 @@
 // Limit to 8GiB to be safe
 #define MAX_GPU_SIZE (1L << 33)
 
+#define MAX_THREADS_PER_BLOCK 1024
+#define MAX_BLOCKS 2147483647
+
 typedef int16_t ewf_offset_t;
 
 struct edit_wavefront_t {
@@ -73,6 +76,7 @@ public:
 
     bool GPU_memory_init ();
     bool GPU_memory_free ();
+    void GPU_launch_extend ();
 };
 
 #endif // Header guard WAVEFRONT_H

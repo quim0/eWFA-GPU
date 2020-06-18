@@ -21,6 +21,7 @@
 
 #include "utils.h"
 #include "wavefront.h"
+#include "kernels.cuh"
 
 // TODO: Check max_gpu_size to take in accont the multiple arrays stored on GPU
 bool Sequences::GPU_memory_init () {
@@ -106,6 +107,7 @@ bool Sequences::GPU_memory_init () {
     cudaMemset((void *) base_ptr, 0, offset_size_bytes * this->num_elements * 2);
     CUDA_CHECK_ERR;
 
+
     // A temporary CPU edit_wavefronts_t array is needed. As we can not access
     // pointers inside GPU, the device pointers results are saved on host RAM,
     // and then send the data to device just once.
@@ -114,8 +116,8 @@ bool Sequences::GPU_memory_init () {
 
     // += 2 because every element have two offsets (wavefront and next_wavefront)
     for (int i=0; i<(this->num_elements * 2); i += 2) {
-        ewf_offset_t *offset1 = (ewf_offset_t*)(base_ptr + i * offset_size_bytes + this->max_distance);
-        ewf_offset_t *offset2 = (ewf_offset_t*)(base_ptr + (i + 1) * offset_size_bytes + this->max_distance);
+        ewf_offset_t *offset1 = (ewf_offset_t*)(base_ptr + i * offset_size_bytes + this->max_distance * sizeof(ewf_offset_t));
+        ewf_offset_t *offset2 = (ewf_offset_t*)(base_ptr + (i + 1) * offset_size_bytes + this->max_distance * sizeof(ewf_offset_t));
         edit_wavefronts_t *curr_host_wf = &(tmp_host_wavefronts[i/2]);
         curr_host_wf->wavefront.offsets = offset1;
         curr_host_wf->next_wavefront.offsets = offset2;
@@ -167,4 +169,25 @@ bool Sequences::GPU_memory_free () {
 
     DEBUG("GPU memory freed.")
     return true;
+}
+
+void Sequences::GPU_launch_extend () {
+    int threads_x = (this->sequence_len > MAX_THREADS_PER_BLOCK) ?
+                                    MAX_THREADS_PER_BLOCK : this->sequence_len;
+
+    int blocks_x = (this->num_elements > MAX_BLOCKS) ?
+                                    MAX_BLOCKS : this->num_elements;
+
+    DEBUG("Launching extend on GPU. %zu elements  with %d blocks of %d threads",
+           this->num_elements, blocks_x, threads_x);
+
+    dim3 numBlocks(blocks_x, 1);
+    dim3 blockDim(threads_x, 1);
+    CLOCK_INIT()
+    CLOCK_START()
+    WF_extend_kernel<<<numBlocks, blockDim>>>(this->d_elements,
+                                              this->d_wavefronts);
+    CUDA_CHECK_ERR;
+    cudaDeviceSynchronize();
+    CLOCK_STOP("GPU extend kernel executed.")
 }
