@@ -22,7 +22,7 @@
 #ifndef KERNELS_CUH
 #define KERNELS_CUH
 
-__global__ void WF_extend_kernel (const WF_element* elements,
+__global__ void WF_edit_distance (const WF_element* elements,
                                   edit_wavefronts_t* const wavefronts);
 
 #endif

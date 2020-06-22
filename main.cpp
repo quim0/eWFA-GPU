@@ -40,7 +40,7 @@ int main (int argc, char** argv) {
 
     Sequences seqs = Sequences(reader.sequences, num_sequences, seq_len);
     seqs.GPU_memory_init();
-    seqs.GPU_launch_extend();
+    seqs.GPU_launch_wavefront_distance();
     seqs.GPU_memory_free();
     return 0;
 }

@@ -23,6 +23,11 @@
 
 #define EWAVEFRONT_V(k,offset) ((offset)-(k))
 #define EWAVEFRONT_H(k,offset) (offset)
+#define EWAVEFRONT_DIAGONAL(h,v) ((h)-(v))
+#define EWAVEFRONT_OFFSET(h,v)   (h)
+
+// TODO: Search instrinsic to use
+#define MAX(x, y) (x > y) ? x : y
 
 #define WRAP_SIZE 32
 
@@ -30,10 +35,8 @@
 // TODO: Offsets are stored in an "array of structs" pattern, it'd be more
 // efficient for memory acceses to store them as a "struct of arrays" (for loop)
 // ^ is this really true ????
-__global__ void WF_extend_kernel (const WF_element* elements,
-                                  edit_wavefronts_t* const wavefronts) {
-    const WF_element element = elements[blockIdx.x];
-    edit_wavefront_t * const wavefront = &(wavefronts[blockIdx.x].wavefront);
+__device__ void WF_extend_kernel (const WF_element element,
+                                  edit_wavefront_t* const wavefront) {
     ewf_offset_t * const offsets = wavefront->offsets;
 
     int tid = threadIdx.x;
@@ -60,10 +63,64 @@ __global__ void WF_extend_kernel (const WF_element* elements,
         while (v < element.len && h < element.len && pattern[v++] == text[h++])
             acc++;
         offsets[k] += acc;
-        __syncthreads();
     }
+    __syncthreads();
 }
 
-__global__ void WF_compute (WF_element* element) {
-    
+__device__ void WF_compute_kernel (edit_wavefront_t* const wavefront,
+                                   edit_wavefront_t* const next_wavefront) {
+    ewf_offset_t * const offsets = wavefront->offsets;
+    ewf_offset_t * const next_offsets = next_wavefront->offsets;
+
+    int tid = threadIdx.x;
+    int tnum = blockDim.x;
+
+    const int lo = wavefront->lo;
+    const int hi = wavefront->hi;
+
+    // Assume the offsets arrays are memset to -1, so we don't need loop peeling
+    for(int k = lo + tid - 1; k <= hi + 1; k += tnum) {
+        // TODO: Look at __vmaxu2 cuda intrinsic (works on 16bit packed uints)
+        //       there's also a signed version (offsets are signed)
+
+        // __nv_max uses 32bits integers, offsets are 16bits and will be
+        // expanded, for a more efficient implementation we should use the
+        // packed version (see the previous TODO)
+        const ewf_offset_t max_ins_sub = MAX(offsets[k], offsets[k - 1]) + 1;
+        next_offsets[k] = MAX(max_ins_sub, offsets[k + 1]);
+    }
+    __syncthreads();
+}
+
+__global__ void WF_edit_distance (const WF_element* elements,
+                                  edit_wavefronts_t* const wavefronts) {
+    const WF_element element = elements[blockIdx.x];
+    edit_wavefront_t* wavefront = &(wavefronts[blockIdx.x].wavefront);
+    edit_wavefront_t* next_wavefront = &(wavefronts[blockIdx.x].next_wavefront);
+
+    const int tid = threadIdx.x;
+
+    // Offsets are initialzied to -1, but the initial position must be 0
+    if (tid == 0)
+        wavefront->offsets[0] = 0;
+
+    __syncthreads();
+
+    const int target_k = EWAVEFRONT_DIAGONAL(element.len, element.len);
+    const int target_k_abs = (target_k >= 0) ? target_k : -target_k;
+    const int target_offset = EWAVEFRONT_OFFSET(element.len, element.len);
+    const int max_distance = element.len * 2;
+    int distance;
+
+    for (distance = 0; distance < max_distance; ++distance) {
+        WF_extend_kernel(element, wavefront);
+        if (target_k_abs <= distance && wavefront->offsets[target_k] == target_offset)
+            break;
+
+        WF_compute_kernel(wavefront, next_wavefront);
+
+        edit_wavefront_t* tmp_wavefront = wavefront;
+        wavefront = next_wavefront;
+        next_wavefront = tmp_wavefront;
+    }
 }

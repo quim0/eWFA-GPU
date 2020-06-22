@@ -104,7 +104,10 @@ bool Sequences::GPU_memory_init () {
     // 2 offsets per element (wavefront and next_wavefront)
     cudaMalloc((void **) &base_ptr, offset_size_bytes * this->num_elements * 2);
     CUDA_CHECK_ERR;
-    cudaMemset((void *) base_ptr, 0, offset_size_bytes * this->num_elements * 2);
+    // Initialize all the offsets to -1 to avoid loop peeling in the compute
+    // kernel
+    // TODO: CHECK THIS
+    cudaMemset((void *) base_ptr, -1, offset_size_bytes * this->num_elements * 2);
     CUDA_CHECK_ERR;
 
 
@@ -171,23 +174,23 @@ bool Sequences::GPU_memory_free () {
     return true;
 }
 
-void Sequences::GPU_launch_extend () {
+void Sequences::GPU_launch_wavefront_distance () {
     int threads_x = (this->sequence_len > MAX_THREADS_PER_BLOCK) ?
                                     MAX_THREADS_PER_BLOCK : this->sequence_len;
 
     int blocks_x = (this->num_elements > MAX_BLOCKS) ?
                                     MAX_BLOCKS : this->num_elements;
 
-    DEBUG("Launching extend on GPU. %zu elements  with %d blocks of %d threads",
-           this->num_elements, blocks_x, threads_x);
+    DEBUG("Launching wavefront alignment on GPU. %zu elements with %d blocks "
+          "of %d threads", this->num_elements, blocks_x, threads_x);
 
     dim3 numBlocks(blocks_x, 1);
     dim3 blockDim(threads_x, 1);
     CLOCK_INIT()
     CLOCK_START()
-    WF_extend_kernel<<<numBlocks, blockDim>>>(this->d_elements,
+    WF_edit_distance<<<numBlocks, blockDim>>>(this->d_elements,
                                               this->d_wavefronts);
     CUDA_CHECK_ERR;
     cudaDeviceSynchronize();
-    CLOCK_STOP("GPU extend kernel executed.")
+    CLOCK_STOP("GPU wavefront alignment kernel executed.")
 }

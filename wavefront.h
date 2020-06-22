@@ -65,7 +65,8 @@ public:
     size_t max_distance;
     size_t sequence_len;
 
-    // Wavefront information on GPU
+    // Wavefront information on GPU, offsets are initialized with -1 to avoid
+    // loop peeling on the compute kernel.
     edit_wavefronts_t* d_wavefronts;
 
     Sequences (WF_element* e, size_t num_e, size_t seq_len) : \
@@ -76,7 +77,7 @@ public:
 
     bool GPU_memory_init ();
     bool GPU_memory_free ();
-    void GPU_launch_extend ();
+    void GPU_launch_wavefront_distance ();
 };
 
 #endif // Header guard WAVEFRONT_H
