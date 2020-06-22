@@ -27,6 +27,9 @@
 #define WRAP_SIZE 32
 
 // Assumes 1 block per element
+// TODO: Offsets are stored in an "array of structs" pattern, it'd be more
+// efficient for memory acceses to store them as a "struct of arrays" (for loop)
+// ^ is this really true ????
 __global__ void WF_extend_kernel (const WF_element* elements,
                                   edit_wavefronts_t* const wavefronts) {
     const WF_element element = elements[blockIdx.x];
@@ -36,35 +39,28 @@ __global__ void WF_extend_kernel (const WF_element* elements,
     int tid = threadIdx.x;
     int tnum = blockDim.x;
 
+    const SEQ_TYPE* text = element.text;
+    const SEQ_TYPE* pattern = element.pattern;
+
     const int k_min = wavefront->lo;
     const int k_max = wavefront->hi;
-    for (int k = k_min; k<=k_max; k++) {
-        const int v_base  = EWAVEFRONT_V(k, offsets[k]);
-        const int h_base  = EWAVEFRONT_H(k, offsets[k]);
-        int v = v_base + tid;
-        int h = h_base + tid;
-        __shared__ unsigned int to_sum;
-        if (tid == 0)
-            to_sum = 0xffffffff;
+
+    // Access the different "k" values in a coescaled way.
+    // This will only loop in the case the number of threads assigned to this
+    // block is lower than the current number of "k" being processed.
+    for(int k = k_min + tid; k <= k_max; k += tnum) {
+        int v  = EWAVEFRONT_V(k, offsets[k]);
+        int h  = EWAVEFRONT_H(k, offsets[k]);
+
+        // Accumulate to register, is this really necessary or the compiler
+        // would do it for us?
+        int acc = 0;
+        // This will probably create a lot of divergence ???
+        // TODO: Also do this in parallel
+        while (v < element.len && h < element.len && pattern[v++] == text[h++])
+            acc++;
+        offsets[k] += acc;
         __syncthreads();
-        // TODO: Don't iterate over all the text/pattern, find a safe way to
-        // stop other threads when one finds a missmatch
-        // TODO: Do the minimum at wrap level and make only one atomic operation
-        while (v < element.len && h < element.len) {
-            bool equal = element.pattern[v] == element.text[h];
-
-            if (!equal) {
-                int curr_position = v - v_base;
-                atomicMin(&to_sum, curr_position);
-                break;
-            }
-
-            v += tnum;
-            h += tnum;
-        }
-        __syncthreads();
-
-        offsets[k] += to_sum;
     }
 }
 
