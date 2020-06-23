@@ -20,6 +20,7 @@
  */
 
 #include "wavefront.h"
+#include <stdio.h>
 
 #define EWAVEFRONT_V(k,offset) ((offset)-(k))
 #define EWAVEFRONT_H(k,offset) (offset)
@@ -27,9 +28,20 @@
 #define EWAVEFRONT_OFFSET(h,v)   (h)
 
 // TODO: Search instrinsic to use
-#define MAX(x, y) (x > y) ? x : y
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
 
-#define WRAP_SIZE 32
+__host__ __device__ void pprint_wavefront(const edit_wavefront_t* const wf) {
+    const ewf_offset_t* const offsets = wf->offsets;
+    const int hi = wf->hi;
+    const int lo = wf->lo;
+
+    printf("+---+\n");
+    int i;
+    for (i=lo; i<=hi; i++) {
+        printf("|%03d|\n", offsets[i]);
+        printf("+---+\n");
+    }
+}
 
 // Assumes 1 block per element
 // TODO: Offsets are stored in an "array of structs" pattern, it'd be more
@@ -78,14 +90,18 @@ __device__ void WF_compute_kernel (edit_wavefront_t* const wavefront,
     const int lo = wavefront->lo;
     const int hi = wavefront->hi;
 
+    if (tid == 0) {
+        next_wavefront->hi = hi + 1;
+        next_wavefront->lo = lo - 1;
+    }
+
+    __syncthreads();
+
     // Assume the offsets arrays are memset to -1, so we don't need loop peeling
     for(int k = lo + tid - 1; k <= hi + 1; k += tnum) {
         // TODO: Look at __vmaxu2 cuda intrinsic (works on 16bit packed uints)
         //       there's also a signed version (offsets are signed)
 
-        // __nv_max uses 32bits integers, offsets are 16bits and will be
-        // expanded, for a more efficient implementation we should use the
-        // packed version (see the previous TODO)
         const ewf_offset_t max_ins_sub = MAX(offsets[k], offsets[k - 1]) + 1;
         next_offsets[k] = MAX(max_ins_sub, offsets[k + 1]);
     }
@@ -103,12 +119,16 @@ __global__ void WF_edit_distance (const WF_element* elements,
     // Offsets are initialzied to -1, but the initial position must be 0
     if (tid == 0)
         wavefront->offsets[0] = 0;
+        wavefront->hi = 0;
+        wavefront->lo = 0;
+        next_wavefront->hi= 0;
+        next_wavefront->lo = 0;
 
     __syncthreads();
 
     const int target_k = EWAVEFRONT_DIAGONAL(element.len, element.len);
     const int target_k_abs = (target_k >= 0) ? target_k : -target_k;
-    const int target_offset = EWAVEFRONT_OFFSET(element.len, element.len);
+    const ewf_offset_t target_offset = EWAVEFRONT_OFFSET(element.len, element.len);
     const int max_distance = element.len * 2;
     int distance;
 
@@ -123,4 +143,16 @@ __global__ void WF_edit_distance (const WF_element* elements,
         wavefront = next_wavefront;
         next_wavefront = tmp_wavefront;
     }
+
+#ifdef DEBUG_MODE
+    if (blockIdx.x == 0 && tid == 0) {
+        char tmp = element.text[element.len];
+        element.text[element.len] = '\0';
+        printf("TEXT: %s\n", element.text);
+        element.pattern[element.len] = '\0';
+        element.text[element.len] = tmp;
+        printf("PATTERN: %s\n", element.pattern);
+        printf("Distance: %d\n", distance);
+    }
+#endif
 }
