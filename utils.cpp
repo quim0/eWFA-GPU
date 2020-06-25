@@ -85,15 +85,12 @@ bool SequenceReader::read_sequences () {
     bool retval = true;
 
     uint32_t idx = 0;
+    int sequence_idx = 0;
+    int elem_idx = 0;
     // Sequence pair format in file:
     // >TEXTGGG
     // <PATTERN
-    while (getline(&buf, &buf_size, fp) > 0) {
-        // Current sequence pair
-        uint32_t sequence_idx = idx / 2;
-        // First or second element of the sequence pair
-        uint32_t elem_idx = idx % 2;
-
+    while (sequence_idx < this->num_sequences && getline(&buf, &buf_size, fp) > 0) {
         WF_element *curr_elem = &(this->sequences[sequence_idx]);
         // Pointer where the current sequence will be allocated in the big
         // memory chunck
@@ -125,7 +122,12 @@ bool SequenceReader::read_sequences () {
             curr_elem->pattern= curr_seq_ptr;
         }
         curr_elem->len = this->seq_len;
+
         idx++;
+        // Current sequence pair
+        sequence_idx = idx / 2;
+        // First or second element of the sequence pair
+        elem_idx = idx % 2;
     }
 
 #ifdef DEBUG_MODE
