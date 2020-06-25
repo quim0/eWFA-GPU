@@ -102,6 +102,8 @@ bool Sequences::GPU_memory_init () {
     // Allocate one big memory chunk in the device for all the offsets
     size_t offset_size_bytes = 2 * this->max_distance * sizeof(ewf_offset_t);
     // 2 offsets per element (wavefront and next_wavefront)
+    DEBUG("Trying to initialize %zu MiB for the offsets.",
+          (offset_size_bytes * this->num_elements * 2) / (1 << 20));
     cudaMalloc((void **) &base_ptr, offset_size_bytes * this->num_elements * 2);
     CUDA_CHECK_ERR;
     // Initialize all the offsets to -1 to avoid loop peeling in the compute
@@ -175,8 +177,11 @@ bool Sequences::GPU_memory_free () {
 }
 
 void Sequences::GPU_launch_wavefront_distance () {
-    int threads_x = (this->sequence_len > MAX_THREADS_PER_BLOCK) ?
-                                    MAX_THREADS_PER_BLOCK : this->sequence_len;
+    // TODO: Determine better the number of threads
+    // For now, use 20% of the sequence length
+    int threads_x = this->sequence / 5;
+    int threads_x = (threads_x > MAX_THREADS_PER_BLOCK) ?
+                                    MAX_THREADS_PER_BLOCK : threads_x;
 
     int blocks_x = (this->num_elements > MAX_BLOCKS) ?
                                     MAX_BLOCKS : this->num_elements;
