@@ -60,8 +60,9 @@ bool Sequences::GPU_memory_init () {
     // device pointers here and then do a single memcpy. This is done to avoid
     // doing a cudaMemcpy on each iteration of the loop, which dramatically
     // drops the performance.
-    WF_element *tmp_wf_elements_host = (WF_element*)
-                                calloc(this->num_elements, sizeof(WF_element));
+    WF_element *tmp_wf_elements_host;
+    cudaMallocHost((void**)&tmp_wf_elements_host, this->num_elements * sizeof(WF_element));
+    CUDA_CHECK_ERR;
 
     // += 2 because every element have two sequences (pattern and text)
     for (int i=0; i<(this->num_elements * 2); i += 2) {
@@ -75,7 +76,7 @@ bool Sequences::GPU_memory_init () {
     cudaMemcpy(this->d_elements, tmp_wf_elements_host,
                this->num_elements * sizeof(WF_element), cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR;
-    free(tmp_wf_elements_host);
+    cudaFreeHost(tmp_wf_elements_host);
 
 #ifdef DEBUG_MODE
     size_t total_memory  = req_memory + seq_size_bytes * 2 * this->num_elements;
@@ -96,8 +97,8 @@ bool Sequences::GPU_memory_init () {
     // Allocate memory for the edit_wavefronts_t structure in GPU
     cudaMalloc((void **) &(this->d_wavefronts), req_memory);
     CUDA_CHECK_ERR;
-    cudaMemset((void *) this->d_wavefronts, 0, req_memory);
-    CUDA_CHECK_ERR;
+    //cudaMemset((void *) this->d_wavefronts, 0, req_memory);
+    //CUDA_CHECK_ERR;
 
     // Allocate one big memory chunk in the device for all the offsets
     size_t offset_size_bytes = 2 * this->max_distance * sizeof(ewf_offset_t);
@@ -116,8 +117,9 @@ bool Sequences::GPU_memory_init () {
     // A temporary CPU edit_wavefronts_t array is needed. As we can not access
     // pointers inside GPU, the device pointers results are saved on host RAM,
     // and then send the data to device just once.
-    edit_wavefronts_t *tmp_host_wavefronts = (edit_wavefronts_t*)calloc(
-                                this->num_elements, sizeof(edit_wavefronts_t));
+    edit_wavefronts_t *tmp_host_wavefronts;
+    cudaMallocHost((void**)&tmp_host_wavefronts, this->num_elements * sizeof(edit_wavefronts_t));
+    CUDA_CHECK_ERR;
 
     // += 2 because every element have two offsets (wavefront and next_wavefront)
     for (int i=0; i<(this->num_elements * 2); i += 2) {
@@ -132,7 +134,7 @@ bool Sequences::GPU_memory_init () {
                req_memory, cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR;
 
-    free(tmp_host_wavefronts);
+    cudaFreeHost(tmp_host_wavefronts);
 
 #ifdef DEBUG_MODE
     total_memory = req_memory + offset_size_bytes * this->num_elements * 2;
