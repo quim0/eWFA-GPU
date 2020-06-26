@@ -22,23 +22,25 @@
 #include "utils.h"
 
 const char *USAGE_STR = "Usage:\n"
-                        "WFA_edit_gpu <file> <sequence_length> <num_of_sequences>\n";
+                        "WFA_edit_gpu <file> <sequence_length> <num_of_sequences> "
+                        "<batch_size=num_of_sequences>\n";
 
 int main (int argc, char** argv) {
-    if (argc != 4) {
+    if (argc < 4 || argc > 5) {
         WF_FATAL(USAGE_STR);
     }
 
     char* seq_file = argv[1];
     size_t seq_len = atoi(argv[2]);
     size_t num_sequences = atoi(argv[3]);
+    size_t batch_size = (argc == 5) ? atoi(argv[4]) : num_sequences;
 
     SequenceReader reader = SequenceReader(seq_file, seq_len, num_sequences);
     if (!reader.read_sequences()) {
         WF_FATAL("Could not read the sequences from file %s\n", argv[1]);
     }
 
-    Sequences seqs = Sequences(reader.sequences, num_sequences, seq_len);
+    Sequences seqs = Sequences(reader.sequences, num_sequences, seq_len, batch_size);
     seqs.GPU_memory_init();
     seqs.GPU_launch_wavefront_distance();
     seqs.GPU_memory_free();

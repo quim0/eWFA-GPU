@@ -179,23 +179,32 @@ bool Sequences::GPU_memory_free () {
 void Sequences::GPU_launch_wavefront_distance () {
     // TODO: Determine better the number of threads
     // For now, use 20% of the sequence length
-    int threads_x = this->sequence_len / 5;
-    threads_x = (threads_x > MAX_THREADS_PER_BLOCK) ?
-                                MAX_THREADS_PER_BLOCK : threads_x;
+    for(int idx = 0; idx < this->num_elements/this->batch_size; idx++) {
+        int threads_x = this->sequence_len / 5;
+        threads_x = (threads_x > MAX_THREADS_PER_BLOCK) ?
+                                    MAX_THREADS_PER_BLOCK : threads_x;
 
-    int blocks_x = (this->num_elements > MAX_BLOCKS) ?
-                                    MAX_BLOCKS : this->num_elements;
+        int blocks_x;
+        // Check if the current batch is smaller than "batch_size"
+        size_t sequences_remaining = this->num_elements - this->batch_size * idx;
+        if (sequences_remaining < this->batch_size)
+            blocks_x = sequences_remaining;
+        else
+            blocks_x = this->batch_size;
+        blocks_x = (blocks_x > MAX_BLOCKS) ?
+                                        MAX_BLOCKS : blocks_x;
 
-    DEBUG("Launching wavefront alignment on GPU. %zu elements with %d blocks "
-          "of %d threads", this->num_elements, blocks_x, threads_x);
+        DEBUG("Launching wavefront alignment on GPU. %d elements with %d blocks "
+              "of %d threads", blocks_x, blocks_x, threads_x);
 
-    dim3 numBlocks(blocks_x, 1);
-    dim3 blockDim(threads_x, 1);
-    CLOCK_INIT()
-    CLOCK_START()
-    WF_edit_distance<<<numBlocks, blockDim>>>(this->d_elements,
-                                              this->d_wavefronts);
-    CUDA_CHECK_ERR;
-    cudaDeviceSynchronize();
-    CLOCK_STOP("GPU wavefront alignment kernel executed.")
+        dim3 numBlocks(blocks_x, 1);
+        dim3 blockDim(threads_x, 1);
+        CLOCK_INIT()
+        CLOCK_START()
+        WF_edit_distance<<<numBlocks, blockDim>>>(&(this->d_elements[idx * this->batch_size]),
+                                                  &(this->d_wavefronts[idx * this->batch_size]));
+        CUDA_CHECK_ERR;
+        cudaDeviceSynchronize();
+        CLOCK_STOP("GPU wavefront alignment kernel executed.")
+    }
 }

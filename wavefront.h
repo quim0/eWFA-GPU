@@ -64,16 +64,18 @@ public:
 
     size_t max_distance;
     size_t sequence_len;
+    size_t batch_size;
 
     // Wavefront information on GPU, offsets are initialized with -1 to avoid
     // loop peeling on the compute kernel.
     edit_wavefronts_t* d_wavefronts;
 
-    Sequences (WF_element* e, size_t num_e, size_t seq_len) : \
-                                                elements(e), \
-                                                num_elements(num_e), \
-                                                sequence_len(seq_len), \
-                                                max_distance(seq_len * 2) {}
+    Sequences (WF_element* e, size_t num_e, size_t seq_len, size_t batch_size) : \
+                                                elements(e),               \
+                                                num_elements(num_e),       \
+                                                sequence_len(seq_len),     \
+                                                max_distance(seq_len * 2), \
+                                                batch_size(batch_size) {}
 
     bool GPU_memory_init ();
     bool GPU_memory_free ();
