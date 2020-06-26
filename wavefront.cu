@@ -179,9 +179,9 @@ bool Sequences::GPU_memory_free () {
 void Sequences::GPU_launch_wavefront_distance () {
     // TODO: Determine better the number of threads
     // For now, use 20% of the sequence length
-    int threads_x = this->sequence / 5;
-    int threads_x = (threads_x > MAX_THREADS_PER_BLOCK) ?
-                                    MAX_THREADS_PER_BLOCK : threads_x;
+    int threads_x = this->sequence_len / 5;
+    threads_x = (threads_x > MAX_THREADS_PER_BLOCK) ?
+                                MAX_THREADS_PER_BLOCK : threads_x;
 
     int blocks_x = (this->num_elements > MAX_BLOCKS) ?
                                     MAX_BLOCKS : this->num_elements;
