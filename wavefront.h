@@ -65,6 +65,11 @@ public:
     size_t max_distance;
     size_t sequence_len;
     size_t batch_size;
+    // Current batch index
+    int batch_idx;
+
+    SEQ_TYPE* sequences_device_ptr;
+    ewf_offset_t* offsets_device_ptr;
 
     // Wavefront information on GPU, offsets are initialized with -1 to avoid
     // loop peeling on the compute kernel.
@@ -75,10 +80,11 @@ public:
                                                 num_elements(num_e),       \
                                                 sequence_len(seq_len),     \
                                                 max_distance(seq_len * 2), \
-                                                batch_size(batch_size) {}
-
+                                                batch_size(batch_size),    \
+                                                batch_idx(0) {}
     bool GPU_memory_init ();
     bool GPU_memory_free ();
+    bool GPU_prepare_memory_next_batch ();
     void GPU_launch_wavefront_distance ();
 };
 

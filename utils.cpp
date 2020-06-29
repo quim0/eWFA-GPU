@@ -30,7 +30,7 @@ void SequenceReader::initialize_sequences () {
     this->sequences = (WF_element*)calloc(this->num_sequences, sizeof(WF_element));
     if (this->sequences == NULL)
         WF_FATAL(NOMEM_ERR_STR);
-    DEBUG("Sequences memoy allocated (%p)", this->sequences);
+    DEBUG("Sequences memory allocated (%p)", this->sequences);
 }
 
 size_t SequenceReader::sequence_buffer_size () {

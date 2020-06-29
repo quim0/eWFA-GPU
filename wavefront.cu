@@ -27,7 +27,7 @@
 bool Sequences::GPU_memory_init () {
     CLOCK_INIT()
     // Send patterns to GPU
-    size_t req_memory = this->num_elements * sizeof(WF_element);
+    size_t req_memory = this->batch_size * sizeof(WF_element);
     if (req_memory > MAX_GPU_SIZE) {
         WF_ERROR("Required memory is bigger than available memory in GPU");
         return false;
@@ -41,18 +41,20 @@ bool Sequences::GPU_memory_init () {
 
     // Allocate a big chunk of memory only once for the different patterns and
     // texts
-    uint8_t* base_ptr;
+    SEQ_TYPE* base_ptr;
     size_t seq_size_bytes = this->sequence_len * sizeof(SEQ_TYPE);
     // *2 sequences per element (pattern and text)
     cudaMalloc((void **) &(base_ptr),
-               (seq_size_bytes * 2) * this->num_elements);
+               (seq_size_bytes * 2) * this->batch_size);
     CUDA_CHECK_ERR;
-    DEBUG("Allocating memory to store text/patterns on device (%zu bytes)",
-          seq_size_bytes * 2 * this->num_elements);
+    this->sequences_device_ptr = base_ptr;
+    DEBUG("Allocating memory to store text/patterns on device (%zu MiB)",
+          (seq_size_bytes * 2 * this->batch_size) / (1 << 20));
 
-    // Copy all the secuences to the fresh allocated memory on GPU
+    // Copy all the secuences for this batch to the fresh allocated memory on
+    // GPU
     cudaMemcpy(base_ptr, this->elements[0].text,
-               (seq_size_bytes * 2) * this->num_elements,
+               (seq_size_bytes * 2) * this->batch_size,
                cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR;
 
@@ -61,11 +63,13 @@ bool Sequences::GPU_memory_init () {
     // doing a cudaMemcpy on each iteration of the loop, which dramatically
     // drops the performance.
     WF_element *tmp_wf_elements_host;
-    cudaMallocHost((void**)&tmp_wf_elements_host, this->num_elements * sizeof(WF_element));
+    cudaMallocHost((void**)&tmp_wf_elements_host, this->batch_size * sizeof(WF_element));
     CUDA_CHECK_ERR;
 
+    // TODO: Check if it's better to make this calculation in a kernel instead
+    // of memcpy the data to the device.
     // += 2 because every element have two sequences (pattern and text)
-    for (int i=0; i<(this->num_elements * 2); i += 2) {
+    for (int i=0; i<(this->batch_size * 2); i += 2) {
         WF_element *tmp_host_elem = &tmp_wf_elements_host[i / 2];
         SEQ_TYPE* seq1 = (SEQ_TYPE*)(base_ptr + i * seq_size_bytes);
         SEQ_TYPE* seq2 = (SEQ_TYPE*)(base_ptr + (i + 1) * seq_size_bytes);
@@ -74,12 +78,12 @@ bool Sequences::GPU_memory_init () {
         tmp_host_elem->len = this->sequence_len;
     }
     cudaMemcpy(this->d_elements, tmp_wf_elements_host,
-               this->num_elements * sizeof(WF_element), cudaMemcpyHostToDevice);
+               this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR;
     cudaFreeHost(tmp_wf_elements_host);
 
 #ifdef DEBUG_MODE
-    size_t total_memory  = req_memory + seq_size_bytes * 2 * this->num_elements;
+    size_t total_memory  = req_memory + seq_size_bytes * 2 * this->batch_size;
     DEBUG("GPU pattern/text memory initialized, %zu MiB used.",
           total_memory / (1 << 20));
     CLOCK_STOP("GPU pattern/text memory initializaion.")
@@ -89,7 +93,7 @@ bool Sequences::GPU_memory_init () {
     CLOCK_START()
 
     // Create offsets into the GPU
-    req_memory = this->num_elements * sizeof(edit_wavefronts_t);
+    req_memory = this->batch_size * sizeof(edit_wavefronts_t);
     if (req_memory > MAX_GPU_SIZE) {
         WF_ERROR("Required memory is bigger than available memory in GPU");
         return false;
@@ -97,20 +101,20 @@ bool Sequences::GPU_memory_init () {
     // Allocate memory for the edit_wavefronts_t structure in GPU
     cudaMalloc((void **) &(this->d_wavefronts), req_memory);
     CUDA_CHECK_ERR;
-    //cudaMemset((void *) this->d_wavefronts, 0, req_memory);
-    //CUDA_CHECK_ERR;
 
     // Allocate one big memory chunk in the device for all the offsets
     size_t offset_size_bytes = 2 * this->max_distance * sizeof(ewf_offset_t);
+    size_t total_offsets_size = offset_size_bytes * this->batch_size * 2;
     // 2 offsets per element (wavefront and next_wavefront)
     DEBUG("Trying to initialize %zu MiB for the offsets.",
-          (offset_size_bytes * this->num_elements * 2) / (1 << 20));
-    cudaMalloc((void **) &base_ptr, offset_size_bytes * this->num_elements * 2);
+          total_offsets_size / (1 << 20));
+    cudaMalloc((void **) &base_ptr, total_offsets_size);
     CUDA_CHECK_ERR;
+    this->offsets_device_ptr = (ewf_offset_t*)base_ptr;
     // Initialize all the offsets to -1 to avoid loop peeling in the compute
     // kernel
     // TODO: CHECK THIS
-    cudaMemset((void *) base_ptr, -1, offset_size_bytes * this->num_elements * 2);
+    cudaMemset((void *) base_ptr, -1, total_offsets_size);
     CUDA_CHECK_ERR;
 
 
@@ -118,11 +122,11 @@ bool Sequences::GPU_memory_init () {
     // pointers inside GPU, the device pointers results are saved on host RAM,
     // and then send the data to device just once.
     edit_wavefronts_t *tmp_host_wavefronts;
-    cudaMallocHost((void**)&tmp_host_wavefronts, this->num_elements * sizeof(edit_wavefronts_t));
+    cudaMallocHost((void**)&tmp_host_wavefronts, this->batch_size * sizeof(edit_wavefronts_t));
     CUDA_CHECK_ERR;
 
     // += 2 because every element have two offsets (wavefront and next_wavefront)
-    for (int i=0; i<(this->num_elements * 2); i += 2) {
+    for (int i=0; i<(this->batch_size * 2); i += 2) {
         ewf_offset_t *offset1 = (ewf_offset_t*)(base_ptr + i * offset_size_bytes + this->max_distance * sizeof(ewf_offset_t));
         ewf_offset_t *offset2 = (ewf_offset_t*)(base_ptr + (i + 1) * offset_size_bytes + this->max_distance * sizeof(ewf_offset_t));
         edit_wavefronts_t *curr_host_wf = &(tmp_host_wavefronts[i/2]);
@@ -137,7 +141,7 @@ bool Sequences::GPU_memory_init () {
     cudaFreeHost(tmp_host_wavefronts);
 
 #ifdef DEBUG_MODE
-    total_memory = req_memory + offset_size_bytes * this->num_elements * 2;
+    total_memory = req_memory + total_offsets_size;
     DEBUG("GPU offsets memory initialized, %zu MiB used.", total_memory / (1 << 20));
     CLOCK_STOP("GPU offsets memory initialization.")
 #endif
@@ -178,23 +182,45 @@ bool Sequences::GPU_memory_free () {
     return true;
 }
 
+bool Sequences::GPU_prepare_memory_next_batch () {
+    // first "alginment" (sequence pair) of the current batch
+    int curr_position = ++this->batch_idx * this->batch_size;
+    if (curr_position >= this->num_elements) {
+        DEBUG("All batches have already been processed.");
+        return false;
+    }
+    DEBUG("Rearranging memory for batch iteration %d (position %d)", this->batch_idx, curr_position);
+    // The last "batch" may be sorter than a complete batch, e.g 10 elements,
+    // batch size of 3
+    int curr_batch_size = ((this->num_elements - curr_position) < this->batch_size) ?
+                            (this->num_elements - curr_position) : this->batch_size;
+
+    // Send the new text/pattern sequences to device
+    size_t seq_size_bytes = this->sequence_len * sizeof(SEQ_TYPE);
+    cudaMemcpy(this->sequences_device_ptr, this->elements[curr_position].text,
+               (seq_size_bytes * 2) * curr_batch_size,
+               cudaMemcpyHostToDevice);
+    CUDA_CHECK_ERR;
+
+    // Reset offsets to -1
+    cudaMemset((void *) this->offsets_device_ptr, -1,
+                  this->max_distance * sizeof(ewf_offset_t) * 2 * curr_batch_size);
+    CUDA_CHECK_ERR;
+
+    return true;
+}
+
 void Sequences::GPU_launch_wavefront_distance () {
     // TODO: Determine better the number of threads
     // For now, use 20% of the sequence length
-    for(int idx = 0; idx < this->num_elements/this->batch_size; idx++) {
         int threads_x = this->sequence_len / 5;
         threads_x = (threads_x > MAX_THREADS_PER_BLOCK) ?
                                     MAX_THREADS_PER_BLOCK : threads_x;
 
         int blocks_x;
         // Check if the current batch is smaller than "batch_size"
-        size_t sequences_remaining = this->num_elements - this->batch_size * idx;
-        if (sequences_remaining < this->batch_size)
-            blocks_x = sequences_remaining;
-        else
-            blocks_x = this->batch_size;
-        blocks_x = (blocks_x > MAX_BLOCKS) ?
-                                        MAX_BLOCKS : blocks_x;
+        blocks_x = (this->batch_size > MAX_BLOCKS) ?
+                                        MAX_BLOCKS : this->batch_size;
 
         DEBUG("Launching wavefront alignment on GPU. %d elements with %d blocks "
               "of %d threads", blocks_x, blocks_x, threads_x);
@@ -203,10 +229,10 @@ void Sequences::GPU_launch_wavefront_distance () {
         dim3 blockDim(threads_x, 1);
         CLOCK_INIT()
         CLOCK_START()
-        WF_edit_distance<<<numBlocks, blockDim>>>(&(this->d_elements[idx * this->batch_size]),
-                                                  &(this->d_wavefronts[idx * this->batch_size]));
+        // TODO
+        WF_edit_distance<<<numBlocks, blockDim>>>(this->d_elements,
+                                                  this->d_wavefronts);
         CUDA_CHECK_ERR;
         cudaDeviceSynchronize();
         CLOCK_STOP("GPU wavefront alignment kernel executed.")
-    }
 }

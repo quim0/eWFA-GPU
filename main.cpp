@@ -35,6 +35,9 @@ int main (int argc, char** argv) {
     size_t num_sequences = atoi(argv[3]);
     size_t batch_size = (argc == 5) ? atoi(argv[4]) : num_sequences;
 
+    if (batch_size > num_sequences)
+        WF_FATAL("batch_size must be >= than the number of alignments.");
+
     SequenceReader reader = SequenceReader(seq_file, seq_len, num_sequences);
     if (!reader.read_sequences()) {
         WF_FATAL("Could not read the sequences from file %s\n", argv[1]);
@@ -43,6 +46,9 @@ int main (int argc, char** argv) {
     Sequences seqs = Sequences(reader.sequences, num_sequences, seq_len, batch_size);
     seqs.GPU_memory_init();
     seqs.GPU_launch_wavefront_distance();
+    while (seqs.GPU_prepare_memory_next_batch()) {
+        seqs.GPU_launch_wavefront_distance();
+    }
     seqs.GPU_memory_free();
     return 0;
 }
