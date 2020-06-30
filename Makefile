@@ -1,9 +1,10 @@
 CC=nvcc
 SRC=main.cpp utils.cpp wavefront.cu kernels.cu
+ARGS=-gencode arch=compute_75,code=sm_75
 
 all:
-	$(CC) $(SRC) -o wfa.edit.distance.gpu
+	$(CC) $(SRC) $(ARGS) -O3 -o wfa.edit.distance.gpu
 debug:
-	$(CC) $(SRC) -DDEBUG_MODE -g -o wfa.edit.distance.gpu
+	$(CC) $(SRC) $(ARGS) -DDEBUG_MODE -g -G -o wfa.edit.distance.gpu
 clean:
 	rm -f wfa.edit.distance.gpu
