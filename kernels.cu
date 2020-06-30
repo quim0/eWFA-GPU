@@ -21,14 +21,12 @@
 
 #include "wavefront.h"
 #include <stdio.h>
+#include <cuda_runtime.h>
 
 #define EWAVEFRONT_V(k,offset) ((offset)-(k))
 #define EWAVEFRONT_H(k,offset) (offset)
 #define EWAVEFRONT_DIAGONAL(h,v) ((h)-(v))
 #define EWAVEFRONT_OFFSET(h,v)   (h)
-
-// TODO: Search instrinsic to use
-#define MAX(x, y) (((x) > (y)) ? (x) : (y))
 
 __host__ __device__ void pprint_wavefront(const edit_wavefront_t* const wf) {
     const ewf_offset_t* const offsets = wf->offsets;
@@ -99,11 +97,8 @@ __device__ void WF_compute_kernel (edit_wavefront_t* const wavefront,
 
     // Assume the offsets arrays are memset to -1, so we don't need loop peeling
     for(int k = lo + tid - 1; k <= hi + 1; k += tnum) {
-        // TODO: Look at __vmaxu2 cuda intrinsic (works on 16bit packed uints)
-        //       there's also a signed version (offsets are signed)
-
-        const ewf_offset_t max_ins_sub = MAX(offsets[k], offsets[k - 1]) + 1;
-        next_offsets[k] = MAX(max_ins_sub, offsets[k + 1]);
+        const ewf_offset_t max_ins_sub = max(offsets[k], offsets[k - 1]) + 1;
+        next_offsets[k] = max(max_ins_sub, offsets[k + 1]);
     }
     __syncthreads();
 }
