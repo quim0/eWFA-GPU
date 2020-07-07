@@ -103,18 +103,33 @@ bool Sequences::GPU_memory_init () {
     CUDA_CHECK_ERR;
 
     // Allocate one big memory chunk in the device for all the offsets
-    size_t offset_size_bytes = 2 * this->max_distance * sizeof(ewf_offset_t);
-    size_t total_offsets_size = offset_size_bytes * this->batch_size * 2;
+    size_t offsets_size_bytes = OFFSETS_TOTAL_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
+    size_t total_offsets_size = offsets_size_bytes * this->batch_size;
+#ifdef DEBUG_MODE
+    if (total_offsets_size >= (1 << 30)) {
+        DEBUG("Trying to initialize %.2f MiB per offset (total %.2f GiB).",
+              (double)offsets_size_bytes / (1 << 20), (double)total_offsets_size / (1 << 30));
+    }
+    else if (offsets_size_bytes >= (1 << 20)) {
+        DEBUG("Trying to initialize %.2f MiB per offset (total %.2f MiB).",
+              (double)offsets_size_bytes / (1 << 20), (double)total_offsets_size / (1 << 20));
+    }
+    else {
+        if (total_offsets_size >= (1 << 20)) {
+            DEBUG("Trying to initialize %.2f KiB per offset (total %.2f MiB).",
+                  (double)offsets_size_bytes / (1 << 10), (double)total_offsets_size / (1 << 20));
+        }
+        else {
+            DEBUG("Trying to initialize %.2f KiB per offset (total %.2f KiB).",
+                  (double)offsets_size_bytes / (1 << 10), (double)total_offsets_size / (1 << 10));
+        }
+    }
+#endif
     // 2 offsets per element (wavefront and next_wavefront)
-    DEBUG("Trying to initialize %zu MiB for the offsets.",
-          total_offsets_size / (1 << 20));
     cudaMalloc((void **) &base_ptr, total_offsets_size);
     CUDA_CHECK_ERR;
     this->offsets_device_ptr = (ewf_offset_t*)base_ptr;
-    // Initialize all the offsets to -1 to avoid loop peeling in the compute
-    // kernel
-    // TODO: CHECK THIS
-    cudaMemset((void *) base_ptr, -1, total_offsets_size);
+    cudaMemset((void *) base_ptr, 0, total_offsets_size);
     CUDA_CHECK_ERR;
 
 
@@ -125,13 +140,11 @@ bool Sequences::GPU_memory_init () {
     cudaMallocHost((void**)&tmp_host_wavefronts, this->batch_size * sizeof(edit_wavefronts_t));
     CUDA_CHECK_ERR;
 
-    // += 2 because every element have two offsets (wavefront and next_wavefront)
-    for (int i=0; i<(this->batch_size * 2); i += 2) {
-        ewf_offset_t *offset1 = (ewf_offset_t*)(base_ptr + i * offset_size_bytes + this->max_distance * sizeof(ewf_offset_t));
-        ewf_offset_t *offset2 = (ewf_offset_t*)(base_ptr + (i + 1) * offset_size_bytes + this->max_distance * sizeof(ewf_offset_t));
-        edit_wavefronts_t *curr_host_wf = &(tmp_host_wavefronts[i/2]);
-        curr_host_wf->wavefront.offsets = offset1;
-        curr_host_wf->next_wavefront.offsets = offset2;
+    for (int i=0; i<this->batch_size; i++) {
+        ewf_offset_t *curr_offset = (ewf_offset_t*)(base_ptr + i * offsets_size_bytes);
+        edit_wavefronts_t *curr_host_wf = &tmp_host_wavefronts[i];
+        curr_host_wf->offsets_base = curr_offset;
+        curr_host_wf->d = 0;
     }
 
     cudaMemcpy(this->d_wavefronts, tmp_host_wavefronts,
@@ -154,11 +167,7 @@ bool Sequences::GPU_memory_free () {
     CLOCK_INIT()
     CLOCK_START()
     // Free all the texts/patterns
-    WF_element tmp_host_elem = {0};
-    cudaMemcpy(&tmp_host_elem, this->d_elements,
-               sizeof(WF_element), cudaMemcpyDeviceToHost);
-    CUDA_CHECK_ERR;
-    cudaFree(tmp_host_elem.text);
+    cudaFree(this->sequences_device_ptr);
     CUDA_CHECK_ERR;
     cudaFree(this->d_elements);
     CUDA_CHECK_ERR;
@@ -167,13 +176,9 @@ bool Sequences::GPU_memory_free () {
 
     // Free all the offsets
     CLOCK_START()
-    edit_wavefront_t tmp_host_wf = {0};
-    cudaMemcpy(&tmp_host_wf, &this->d_wavefronts[0].wavefront,
-               sizeof(edit_wavefront_t), cudaMemcpyDeviceToHost);
+    cudaFree(this->offsets_device_ptr);
     CUDA_CHECK_ERR;
-    cudaFree(tmp_host_wf.offsets - this->max_distance);
-    CUDA_CHECK_ERR;
-    cudaFree(d_wavefronts);
+    cudaFree(this->d_wavefronts);
     CUDA_CHECK_ERR;
 
     CLOCK_STOP("Offsets GPU memory freed.")
@@ -202,37 +207,33 @@ bool Sequences::GPU_prepare_memory_next_batch () {
                cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR;
 
-    // Reset offsets to -1
-    cudaMemset((void *) this->offsets_device_ptr, -1,
-                  this->max_distance * sizeof(ewf_offset_t) * 2 * curr_batch_size);
-    CUDA_CHECK_ERR;
-
     return true;
 }
 
 void Sequences::GPU_launch_wavefront_distance () {
     // TODO: Determine better the number of threads
     // For now, use 20% of the sequence length
-        int threads_x = this->sequence_len / 5;
-        threads_x = (threads_x > MAX_THREADS_PER_BLOCK) ?
-                                    MAX_THREADS_PER_BLOCK : threads_x;
+    int threads_x = this->sequence_len / 5;
+    threads_x = (threads_x > MAX_THREADS_PER_BLOCK) ?
+                                MAX_THREADS_PER_BLOCK : threads_x;
 
-        int blocks_x;
-        // Check if the current batch is smaller than "batch_size"
-        blocks_x = (this->batch_size > MAX_BLOCKS) ?
-                                        MAX_BLOCKS : this->batch_size;
+    int blocks_x;
+    // Check if the current batch is smaller than "batch_size"
+    blocks_x = (this->batch_size > MAX_BLOCKS) ?
+                                    MAX_BLOCKS : this->batch_size;
 
-        DEBUG("Launching wavefront alignment on GPU. %d elements with %d blocks "
-              "of %d threads", blocks_x, blocks_x, threads_x);
+    DEBUG("Launching wavefront alignment on GPU. %d elements with %d blocks "
+          "of %d threads", blocks_x, blocks_x, threads_x);
 
-        dim3 numBlocks(blocks_x, 1);
-        dim3 blockDim(threads_x, 1);
-        CLOCK_INIT()
-        CLOCK_START()
-        // TODO
-        WF_edit_distance<<<numBlocks, blockDim>>>(this->d_elements,
-                                                  this->d_wavefronts);
-        cudaDeviceSynchronize();
-        CUDA_CHECK_ERR;
-        CLOCK_STOP("GPU wavefront alignment kernel executed.")
+    dim3 numBlocks(blocks_x, 1);
+    dim3 blockDim(threads_x, 1);
+    CLOCK_INIT()
+    CLOCK_START()
+    // TODO
+    WF_edit_distance<<<numBlocks, blockDim>>>(this->d_elements,
+                                              this->d_wavefronts,
+                                              this->max_distance);
+    cudaDeviceSynchronize();
+    CUDA_CHECK_ERR;
+    CLOCK_STOP("GPU wavefront alignment kernel executed.")
 }

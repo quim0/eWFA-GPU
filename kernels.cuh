@@ -23,6 +23,7 @@
 #define KERNELS_CUH
 
 __global__ void WF_edit_distance (const WF_element* elements,
-                                  edit_wavefronts_t* const wavefronts);
+                                  edit_wavefronts_t* const wavefronts,
+                                  size_t max_distance);
 
 #endif

@@ -28,10 +28,10 @@
 #define EWAVEFRONT_DIAGONAL(h,v) ((h)-(v))
 #define EWAVEFRONT_OFFSET(h,v)   (h)
 
-__host__ __device__ void pprint_wavefront(const edit_wavefront_t* const wf) {
-    const ewf_offset_t* const offsets = wf->offsets;
-    const int hi = wf->hi;
-    const int lo = wf->lo;
+__host__ __device__ void pprint_wavefront(const edit_wavefronts_t* const wf) {
+    const ewf_offset_t* const offsets = OFFSETS_PTR(wf->offsets_base, wf->d);
+    const int hi = wf->d;
+    const int lo = -wf->d;
 
     printf("+---+\n");
     int i;
@@ -46,8 +46,8 @@ __host__ __device__ void pprint_wavefront(const edit_wavefront_t* const wf) {
 // efficient for memory acceses to store them as a "struct of arrays" (for loop)
 // ^ is this really true ????
 __device__ void WF_extend_kernel (const WF_element element,
-                                  edit_wavefront_t* const wavefront) {
-    ewf_offset_t * const offsets = wavefront->offsets;
+                                  edit_wavefronts_t* const wavefronts) {
+    ewf_offset_t * const offsets = OFFSETS_PTR(wavefronts->offsets_base, wavefronts->d);
 
     int tid = threadIdx.x;
     int tnum = blockDim.x;
@@ -55,8 +55,8 @@ __device__ void WF_extend_kernel (const WF_element element,
     const SEQ_TYPE* text = element.text;
     const SEQ_TYPE* pattern = element.pattern;
 
-    const int k_min = wavefront->lo;
-    const int k_max = wavefront->hi;
+    const int k_min = -wavefronts->d;
+    const int k_max = wavefronts->d;
 
     // Access the different "k" values in a coescaled way.
     // This will only loop in the case the number of threads assigned to this
@@ -77,70 +77,67 @@ __device__ void WF_extend_kernel (const WF_element element,
     __syncthreads();
 }
 
-__device__ void WF_compute_kernel (edit_wavefront_t* const wavefront,
-                                   edit_wavefront_t* const next_wavefront) {
-    ewf_offset_t * const offsets = wavefront->offsets;
-    ewf_offset_t * const next_offsets = next_wavefront->offsets;
+__device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts) {
+    ewf_offset_t * const offsets = OFFSETS_PTR(wavefronts->offsets_base, wavefronts->d);
+    ewf_offset_t * const next_offsets = OFFSETS_PTR(wavefronts->offsets_base, (wavefronts->d + 1));
 
     int tid = threadIdx.x;
     int tnum = blockDim.x;
 
-    const int lo = wavefront->lo;
-    const int hi = wavefront->hi;
+    const int hi = wavefronts->d;
+    const int lo = -wavefronts->d;
 
     if (tid == 0) {
-        next_wavefront->hi = hi + 1;
-        next_wavefront->lo = lo - 1;
+        // Loop peeling (k=lo-1)
+        next_offsets[lo - 1] = offsets[lo];
+        // Loop peeling (k=lo)
+        const ewf_offset_t bottom_upper_del = ((lo+1) <= hi) ? offsets[lo+1] : -1;
+        next_offsets[lo] = max(offsets[lo ]+ 1, bottom_upper_del);
     }
 
-    __syncthreads();
-
-    // Assume the offsets arrays are memset to -1, so we don't need loop peeling
-    for(int k = lo + tid - 1; k <= hi + 1; k += tnum) {
+    for(int k = lo + tid + 1; k <= hi - 1; k += tnum) {
         const ewf_offset_t max_ins_sub = max(offsets[k], offsets[k - 1]) + 1;
         next_offsets[k] = max(max_ins_sub, offsets[k + 1]);
+    }
+
+    if (tid == 0) {
+        // Loop peeling (k=hi)
+        const ewf_offset_t top_lower_ins = (lo <= (hi-1)) ? offsets[hi-1] : -1;
+        next_offsets[hi] = max(offsets[hi],top_lower_ins) + 1;
+        // Loop peeling (k=hi+1)
+        next_offsets[hi+1] = offsets[hi] + 1;
     }
     __syncthreads();
 }
 
 __global__ void WF_edit_distance (const WF_element* elements,
-                                  edit_wavefronts_t* const wavefronts) {
+                                  edit_wavefronts_t* const alignments,
+                                  const size_t max_distance) {
     const WF_element element = elements[blockIdx.x];
-    edit_wavefront_t* wavefront = &(wavefronts[blockIdx.x].wavefront);
-    edit_wavefront_t* next_wavefront = &(wavefronts[blockIdx.x].next_wavefront);
-
-    const int tid = threadIdx.x;
-
-    // Offsets are initialzied to -1, but the initial position must be 0
-    if (tid == 0)
-        wavefront->offsets[0] = 0;
-        wavefront->hi = 0;
-        wavefront->lo = 0;
-        next_wavefront->hi= 0;
-        next_wavefront->lo = 0;
-
-    __syncthreads();
+    edit_wavefronts_t* wavefronts = &(alignments[blockIdx.x]);
 
     const int target_k = EWAVEFRONT_DIAGONAL(element.len, element.len);
     const int target_k_abs = (target_k >= 0) ? target_k : -target_k;
     const ewf_offset_t target_offset = EWAVEFRONT_OFFSET(element.len, element.len);
-    const int max_distance = element.len * 2;
     int distance;
 
-    for (distance = 0; distance < max_distance; ++distance) {
-        WF_extend_kernel(element, wavefront);
-        if (target_k_abs <= distance && wavefront->offsets[target_k] == target_offset)
+    for (distance = 0; distance < max_distance; distance++) {
+        wavefronts->d = distance;
+        WF_extend_kernel(element, wavefronts);
+        ewf_offset_t* curr_offsets = OFFSETS_PTR(wavefronts->offsets_base, wavefronts->d);
+        if (target_k_abs <= distance && curr_offsets[target_k] == target_offset)
             break;
 
-        WF_compute_kernel(wavefront, next_wavefront);
-
-        edit_wavefront_t* tmp_wavefront = wavefront;
-        wavefront = next_wavefront;
-        next_wavefront = tmp_wavefront;
+        WF_compute_kernel(wavefronts);
     }
 
 #ifdef DEBUG_MODE
+    const int tid = threadIdx.x;
     if (blockIdx.x == 0 && tid == 0) {
+        if (distance == (max_distance - 1)) {
+            // TODO
+            printf("Max distance reached!!!\n");
+        }
         char tmp = element.text[element.len];
         element.text[element.len] = '\0';
         printf("TEXT: %s\n", element.text);

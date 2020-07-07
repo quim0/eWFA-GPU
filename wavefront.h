@@ -35,15 +35,12 @@
 
 typedef int16_t ewf_offset_t;
 
-struct edit_wavefront_t {
-    int hi;
-    int lo;
-    ewf_offset_t* offsets;
-};
+#define OFFSETS_TOTAL_ELEMENTS(max_d) (max_d * max_d + (max_d * 2 + 1))
+#define OFFSETS_PTR(offsets_mem, d) (offsets_mem + ((d)*(d)) + (d))
 
 struct edit_wavefronts_t {
-    edit_wavefront_t wavefront;
-    edit_wavefront_t next_wavefront;
+    uint32_t d;
+    ewf_offset_t* offsets_base;
 };
 
 struct WF_element {
@@ -68,24 +65,24 @@ public:
     // Current batch index
     int batch_idx;
 
-    SEQ_TYPE* sequences_device_ptr;
-    ewf_offset_t* offsets_device_ptr;
-
-    // Wavefront information on GPU, offsets are initialized with -1 to avoid
-    // loop peeling on the compute kernel.
     edit_wavefronts_t* d_wavefronts;
 
     Sequences (WF_element* e, size_t num_e, size_t seq_len, size_t batch_size) : \
                                                 elements(e),               \
                                                 num_elements(num_e),       \
                                                 sequence_len(seq_len),     \
-                                                max_distance(seq_len * 2), \
+    // TODO: Assume error of max 20%, arbitrary chose
+                                                max_distance(seq_len / 5), \
                                                 batch_size(batch_size),    \
                                                 batch_idx(0) {}
     bool GPU_memory_init ();
     bool GPU_memory_free ();
     bool GPU_prepare_memory_next_batch ();
     void GPU_launch_wavefront_distance ();
+
+private:
+    SEQ_TYPE* sequences_device_ptr;
+    ewf_offset_t* offsets_device_ptr;
 };
 
 #endif // Header guard WAVEFRONT_H
