@@ -23,6 +23,7 @@
 #define WAVEFRONT_H
 
 #include <cuda.h>
+#include <stdio.h>
 #include "cuda_helpers.cuh"
 
 #define SEQ_TYPE char
@@ -65,7 +66,10 @@ public:
     // Current batch index
     int batch_idx;
 
+    // Pointer of wavefronts on device
     edit_wavefronts_t* d_wavefronts;
+    // Array of wavefronts on host for backtrace calculation
+    edit_wavefronts_t* wavefronts;
 
     Sequences (WF_element* e, size_t num_e, size_t seq_len, size_t batch_size) : \
                                                 elements(e),               \
@@ -74,7 +78,24 @@ public:
     // TODO: Assume error of max 20%, arbitrary chose
                                                 max_distance(seq_len / 5), \
                                                 batch_size(batch_size),    \
-                                                batch_idx(0) {}
+                                                batch_idx(0) {
+        // Initialize CPU memory
+        this->offsets_host_ptr = (ewf_offset_t*)calloc(
+                            OFFSETS_TOTAL_ELEMENTS(this->max_distance) * this->batch_size,
+                            sizeof(ewf_offset_t));
+        if (!this->offsets_host_ptr) {
+            // TODO: Reorganize code so we can include WF_FATAL here
+            fprintf(stderr, "Out of memory on CPU. (%s:%d)", __FILE__, __LINE__);
+            exit(1);
+        }
+
+        this->wavefronts = (edit_wavefronts_t*)calloc(this->batch_size,
+                                                      sizeof(edit_wavefronts_t));
+        if (!this->wavefronts) {
+            fprintf(stderr, "Out of memory on CPU. (%s:%d)", __FILE__, __LINE__);
+            exit(1);
+        }
+    }
     bool GPU_memory_init ();
     bool GPU_memory_free ();
     bool GPU_prepare_memory_next_batch ();
@@ -83,6 +104,7 @@ public:
 private:
     SEQ_TYPE* sequences_device_ptr;
     ewf_offset_t* offsets_device_ptr;
+    ewf_offset_t* offsets_host_ptr;
 };
 
 #endif // Header guard WAVEFRONT_H

@@ -236,4 +236,18 @@ void Sequences::GPU_launch_wavefront_distance () {
     cudaDeviceSynchronize();
     CUDA_CHECK_ERR;
     CLOCK_STOP("GPU wavefront alignment kernel executed.")
+
+    size_t offsets_size_bytes = OFFSETS_TOTAL_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
+    size_t total_offsets_size = offsets_size_bytes * this->batch_size;
+
+    // Copy the all the offsets back
+    cudaMemcpy(this->offsets_host_ptr, this->offsets_device_ptr, total_offsets_size, cudaMemcpyDeviceToHost);
+    CUDA_CHECK_ERR;
+    // Copy all the structures the get the "target_d"
+    cudaMemcpy(this->wavefronts, this->d_wavefronts, this->batch_size * sizeof(edit_wavefronts_t), cudaMemcpyDeviceToHost);
+    // Change device pointers per host pointers
+    for (int i=0; i<this->batch_size; i++) {
+        ewf_offset_t *curr_offset = (ewf_offset_t*)(this->offsets_host_ptr + i * OFFSETS_TOTAL_ELEMENTS(this->max_distance));
+        this->wavefronts[i].offsets_base = curr_offset;
+    }
 }
