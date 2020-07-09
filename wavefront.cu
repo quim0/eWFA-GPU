@@ -23,6 +23,9 @@
 #include "wavefront.h"
 #include "kernels.cuh"
 
+#define EWAVEFRONT_DIAGONAL(h,v) ((h)-(v))
+#define EWAVEFRONT_OFFSET(h,v)   (h)
+
 // TODO: Check max_gpu_size to take in accont the multiple arrays stored on GPU
 bool Sequences::GPU_memory_init () {
     CLOCK_INIT()
@@ -208,6 +211,57 @@ bool Sequences::GPU_prepare_memory_next_batch () {
     CUDA_CHECK_ERR;
 
     return true;
+}
+
+void Sequences::backtrace () {
+    DEBUG("Starting backtrace.");
+    CLOCK_INIT()
+    CLOCK_START()
+    for (int i=0; i<this->batch_size; i++) {
+        const WF_element element = this->elements[i];
+        const edit_wavefronts_t wavefronts = this->wavefronts[i];
+        const int target_k = EWAVEFRONT_DIAGONAL(element.len, element.len);
+
+        int edit_cigar_idx = 0;
+        edit_cigar_t* const curr_cigar = this->cigars.get_cigar(i);
+        int k = target_k;
+        int d = wavefronts.d;
+        const ewf_offset_t* curr_offsets_column = OFFSETS_PTR(wavefronts.offsets_base, d);
+        ewf_offset_t offset = curr_offsets_column[k];
+
+        while (d > 0) {
+            int lo = -d;
+            int hi = d;
+            ewf_offset_t* prev_offsets = OFFSETS_PTR(wavefronts.offsets_base, d - 1);
+            if (lo <= k+1 && k+1 <= hi && offset == prev_offsets[k+1]) {
+                curr_cigar[edit_cigar_idx++] = 'D';
+                k++;
+                d--;
+            }
+            else if (lo <= k-1 && k-1 <= hi && offset == prev_offsets[k-1] + 1) {
+                curr_cigar[edit_cigar_idx++] = 'I';
+                k--;
+                offset--;
+                d--;
+            }
+            else if (lo <= k && k <= hi && offset == prev_offsets[k]) {
+                curr_cigar[edit_cigar_idx++] = 'X';
+                offset--;
+                d--;
+            }
+            else {
+                curr_cigar[edit_cigar_idx++] = 'M';
+                offset--;
+            }
+        }
+
+        while (offset > 0) {
+            curr_cigar[edit_cigar_idx++] = 'M';
+            offset--;
+        }
+        //DEBUG("Cigar: %s", curr_cigar);
+    }
+    CLOCK_STOP("Backtrace completed.")
 }
 
 void Sequences::GPU_launch_wavefront_distance () {

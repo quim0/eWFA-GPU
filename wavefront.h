@@ -35,6 +35,26 @@
 #define MAX_BLOCKS 2147483647
 
 typedef int16_t ewf_offset_t;
+typedef char edit_cigar_t;
+
+class Cigars {
+public:
+    Cigars (int n, size_t max_d) {
+        this->max_distance = max_d;
+        this->data = (edit_cigar_t*)calloc(n * max_d, sizeof(edit_cigar_t));
+        if (!this->data) {
+            fprintf(stderr, "Out of memory on CPU. (%s:%d)", __FILE__, __LINE__);
+            exit(1);
+        }
+    }
+
+    edit_cigar_t* get_cigar (int n) {
+        return &this->data[n * this->max_distance];
+    }
+private:
+    size_t max_distance;
+    edit_cigar_t *data;
+};
 
 #define OFFSETS_TOTAL_ELEMENTS(max_d) (max_d * max_d + (max_d * 2 + 1))
 #define OFFSETS_PTR(offsets_mem, d) (offsets_mem + ((d)*(d)) + (d))
@@ -71,6 +91,8 @@ public:
     // Array of wavefronts on host for backtrace calculation
     edit_wavefronts_t* wavefronts;
 
+    Cigars cigars;
+
     Sequences (WF_element* e, size_t num_e, size_t seq_len, size_t batch_size) : \
                                                 elements(e),               \
                                                 num_elements(num_e),       \
@@ -78,7 +100,8 @@ public:
     // TODO: Assume error of max 20%, arbitrary chose
                                                 max_distance(seq_len / 5), \
                                                 batch_size(batch_size),    \
-                                                batch_idx(0) {
+                                                batch_idx(0),              \
+                                                cigars(Cigars(batch_size, this->max_distance)) {
         // Initialize CPU memory
         this->offsets_host_ptr = (ewf_offset_t*)calloc(
                             OFFSETS_TOTAL_ELEMENTS(this->max_distance) * this->batch_size,
@@ -99,6 +122,7 @@ public:
     bool GPU_memory_init ();
     bool GPU_memory_free ();
     bool GPU_prepare_memory_next_batch ();
+    void backtrace ();
     void GPU_launch_wavefront_distance ();
 
 private:

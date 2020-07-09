@@ -141,9 +141,11 @@ __global__ void WF_edit_distance (const WF_element* elements,
         char tmp = element.text[element.len];
         element.text[element.len] = '\0';
         printf("TEXT: %s\n", element.text);
-        element.pattern[element.len] = '\0';
         element.text[element.len] = tmp;
+        tmp = element.pattern[element.len];
+        element.pattern[element.len] = '\0';
         printf("PATTERN: %s\n", element.pattern);
+        element.pattern[element.len] = tmp;
         printf("Distance: %d\n", distance);
     }
 #endif
