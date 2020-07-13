@@ -46,10 +46,8 @@ int main (int argc, char** argv) {
     Sequences seqs = Sequences(reader.sequences, num_sequences, seq_len, batch_size);
     seqs.GPU_memory_init();
     seqs.GPU_launch_wavefront_distance();
-    seqs.backtrace();
     while (seqs.GPU_prepare_memory_next_batch()) {
         seqs.GPU_launch_wavefront_distance();
-        seqs.backtrace();
     }
     seqs.GPU_memory_free();
     return 0;

@@ -25,7 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "wavefront.h"
+#include "wavefront.cuh"
 
 #ifdef DEBUG_MODE
 #define DEBUG(...) {\

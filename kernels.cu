@@ -19,7 +19,7 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "wavefront.h"
+#include "wavefront.cuh"
 #include <stdio.h>
 #include <cuda_runtime.h>
 
@@ -38,6 +38,50 @@ __host__ __device__ void pprint_wavefront(const edit_wavefronts_t* const wf) {
     for (i=lo; i<=hi; i++) {
         printf("|%03d|\n", offsets[i]);
         printf("+---+\n");
+    }
+}
+
+__device__ void WF_backtrace (const edit_wavefronts_t* wavefronts,
+                              const Cigars cigars,
+                              int target_k) {
+    if (threadIdx.x == 0) {
+        edit_cigar_t* const curr_cigar = cigars.get_cigar(blockIdx.x);
+        int edit_cigar_idx = 0;
+        int k = target_k;
+        int d = wavefronts->d;
+        const ewf_offset_t* curr_offsets_column = OFFSETS_PTR(wavefronts->offsets_base, d);
+        ewf_offset_t offset = curr_offsets_column[k];
+
+        while (d > 0) {
+            int lo = -(d - 1);
+            int hi = (d - 1);
+            ewf_offset_t* prev_offsets = OFFSETS_PTR(wavefronts->offsets_base, d - 1);
+            if (lo <= k+1 && k+1 <= hi && offset == prev_offsets[k+1]) {
+                curr_cigar[edit_cigar_idx++] = 'D';
+                k++;
+                d--;
+            }
+            else if (lo <= k-1 && k-1 <= hi && offset == prev_offsets[k-1] + 1) {
+                curr_cigar[edit_cigar_idx++] = 'I';
+                k--;
+                offset--;
+                d--;
+            }
+            else if (lo <= k && k <= hi && offset == prev_offsets[k]) {
+                curr_cigar[edit_cigar_idx++] = 'X';
+                offset--;
+                d--;
+            }
+            else {
+                curr_cigar[edit_cigar_idx++] = 'M';
+                offset--;
+            }
+        }
+
+        while (offset > 0) {
+            curr_cigar[edit_cigar_idx++] = 'M';
+            offset--;
+        }
     }
 }
 
@@ -112,7 +156,8 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts) {
 
 __global__ void WF_edit_distance (const WF_element* elements,
                                   edit_wavefronts_t* const alignments,
-                                  const size_t max_distance) {
+                                  const size_t max_distance,
+                                  const Cigars cigars) {
     const WF_element element = elements[blockIdx.x];
     edit_wavefronts_t* wavefronts = &(alignments[blockIdx.x]);
 
@@ -130,6 +175,7 @@ __global__ void WF_edit_distance (const WF_element* elements,
 
         WF_compute_kernel(wavefronts);
     }
+    WF_backtrace(wavefronts, cigars, target_k);
 
 #ifdef DEBUG_MODE
     const int tid = threadIdx.x;

@@ -24,6 +24,6 @@
 
 __global__ void WF_edit_distance (const WF_element* elements,
                                   edit_wavefronts_t* const wavefronts,
-                                  size_t max_distance);
-
+                                  size_t max_distance,
+                                  const Cigars cigars);
 #endif

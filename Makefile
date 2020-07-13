@@ -1,5 +1,5 @@
 CC=nvcc
-SRC=main.cpp utils.cpp wavefront.cu kernels.cu
+SRC=main.cu utils.cu wavefront.cu kernels.cu
 ARGS=-gencode arch=compute_75,code=sm_75
 
 all:

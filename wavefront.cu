@@ -20,7 +20,7 @@
  */
 
 #include "utils.h"
-#include "wavefront.h"
+#include "wavefront.cuh"
 #include "kernels.cuh"
 
 #define EWAVEFRONT_DIAGONAL(h,v) ((h)-(v))
@@ -213,56 +213,6 @@ bool Sequences::GPU_prepare_memory_next_batch () {
     return true;
 }
 
-void Sequences::backtrace () {
-    DEBUG("Starting backtrace.");
-    CLOCK_INIT()
-    CLOCK_START()
-    for (int i=0; i<this->batch_size; i++) {
-        const WF_element element = this->elements[i];
-        const edit_wavefronts_t wavefronts = this->wavefronts[i];
-        const int target_k = EWAVEFRONT_DIAGONAL(element.len, element.len);
-
-        int edit_cigar_idx = 0;
-        edit_cigar_t* const curr_cigar = this->cigars.get_cigar(i);
-        int k = target_k;
-        int d = wavefronts.d;
-        const ewf_offset_t* curr_offsets_column = OFFSETS_PTR(wavefronts.offsets_base, d);
-        ewf_offset_t offset = curr_offsets_column[k];
-
-        while (d > 0) {
-            int lo = -d;
-            int hi = d;
-            ewf_offset_t* prev_offsets = OFFSETS_PTR(wavefronts.offsets_base, d - 1);
-            if (lo <= k+1 && k+1 <= hi && offset == prev_offsets[k+1]) {
-                curr_cigar[edit_cigar_idx++] = 'D';
-                k++;
-                d--;
-            }
-            else if (lo <= k-1 && k-1 <= hi && offset == prev_offsets[k-1] + 1) {
-                curr_cigar[edit_cigar_idx++] = 'I';
-                k--;
-                offset--;
-                d--;
-            }
-            else if (lo <= k && k <= hi && offset == prev_offsets[k]) {
-                curr_cigar[edit_cigar_idx++] = 'X';
-                offset--;
-                d--;
-            }
-            else {
-                curr_cigar[edit_cigar_idx++] = 'M';
-                offset--;
-            }
-        }
-
-        while (offset > 0) {
-            curr_cigar[edit_cigar_idx++] = 'M';
-            offset--;
-        }
-        //DEBUG("Cigar: %s", curr_cigar);
-    }
-    CLOCK_STOP("Backtrace completed.")
-}
 
 void Sequences::GPU_launch_wavefront_distance () {
     // TODO: Determine better the number of threads
@@ -284,24 +234,15 @@ void Sequences::GPU_launch_wavefront_distance () {
     CLOCK_INIT()
     CLOCK_START()
     // TODO
-    WF_edit_distance<<<numBlocks, blockDim>>>(this->d_elements,
+    WF_edit_distance<<<numBlocks, 32>>>(this->d_elements,
                                               this->d_wavefronts,
-                                              this->max_distance);
+                                              this->max_distance,
+                                              this->d_cigars);
     cudaDeviceSynchronize();
     CUDA_CHECK_ERR;
     CLOCK_STOP("GPU wavefront alignment kernel executed.")
 
-    size_t offsets_size_bytes = OFFSETS_TOTAL_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
-    size_t total_offsets_size = offsets_size_bytes * this->batch_size;
-
-    // Copy the all the offsets back
-    cudaMemcpy(this->offsets_host_ptr, this->offsets_device_ptr, total_offsets_size, cudaMemcpyDeviceToHost);
-    CUDA_CHECK_ERR;
-    // Copy all the structures the get the "target_d"
-    cudaMemcpy(this->wavefronts, this->d_wavefronts, this->batch_size * sizeof(edit_wavefronts_t), cudaMemcpyDeviceToHost);
-    // Change device pointers per host pointers
-    for (int i=0; i<this->batch_size; i++) {
-        ewf_offset_t *curr_offset = (ewf_offset_t*)(this->offsets_host_ptr + i * OFFSETS_TOTAL_ELEMENTS(this->max_distance));
-        this->wavefronts[i].offsets_base = curr_offset;
-    }
+    // Copy the all cigars back
+    this->h_cigars.copyIn(this->d_cigars);
+    DEBUG("CIGAR: %.*s", (int)this->max_distance, this->h_cigars.get_cigar(0))
 }
