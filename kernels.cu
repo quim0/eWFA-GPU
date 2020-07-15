@@ -67,7 +67,7 @@ __device__ void WF_backtrace (const edit_wavefronts_t* wavefronts,
                 offset--;
                 d--;
             }
-            else if (lo <= k && k <= hi && offset == prev_offsets[k]) {
+            else if (lo <= k && k <= hi && offset == prev_offsets[k] + 1) {
                 curr_cigar[edit_cigar_idx++] = 'X';
                 offset--;
                 d--;
