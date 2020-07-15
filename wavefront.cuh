@@ -132,6 +132,8 @@ public:
                               text_pos, element.text[text_pos]);
                         return false;
                     }
+                    ++pattern_pos;
+                    ++text_pos;
                     break;
                 default:
                     WF_FATAL("Invalid CIGAR generated.");
