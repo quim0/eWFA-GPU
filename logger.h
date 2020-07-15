@@ -28,6 +28,16 @@
     snprintf(tmp, 512, __VA_ARGS__); \
     fprintf(stderr, "DEBUG: %s (%s:%d)\n", tmp, __FILE__, __LINE__); \
     }
+#define DEBUG_GREEN(...) {\
+    char tmp[512];\
+    snprintf(tmp, 512, __VA_ARGS__); \
+    fprintf(stderr, "\u001b[32mDEBUG: %s (%s:%d)\u001b[0m\n", tmp, __FILE__, __LINE__); \
+    }
+#define DEBUG_RED(...) {\
+    char tmp[512];\
+    snprintf(tmp, 512, __VA_ARGS__); \
+    fprintf(stderr, "\u001b[31mDEBUG: %s (%s:%d)\u001b[0m\n", tmp, __FILE__, __LINE__); \
+    }
 #define CLOCK_INIT() struct timespec now, tmstart; double seconds;
 #define CLOCK_START() clock_gettime(CLOCK_REALTIME, &tmstart);
 #define CLOCK_STOP(text) \

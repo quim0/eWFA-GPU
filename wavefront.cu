@@ -253,9 +253,17 @@ void Sequences::GPU_launch_wavefront_distance () {
 
     // Copy the all cigars back
     this->h_cigars.copyIn(this->d_cigars);
-    this->h_cigars.print_cigar(0);
-    int curr_position = this->batch_idx * this->batch_size;
 #ifdef DEBUG_MODE
-    this->h_cigars.check_cigar(0, this->elements[curr_position]);
+    int curr_position = this->batch_idx * this->batch_size;
+    // Assume num_alignments == num_blocks
+    int total_corrects = 0;
+    for (int i=0; i<blocks_x; i++)
+        if (this->h_cigars.check_cigar(i, this->elements[curr_position + i]))
+            total_corrects++;
+
+    if (total_corrects == blocks_x)
+        DEBUG_GREEN("Correct alignments: %d/%d", total_corrects, blocks_x)
+    else
+        DEBUG_RED("Correct alignments: %d/%d", total_corrects, blocks_x)
 #endif
 }
