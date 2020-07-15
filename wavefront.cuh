@@ -40,14 +40,17 @@ typedef char edit_cigar_t;
 class Cigars {
 public:
     __host__ Cigars (int n, size_t max_d, bool device) {
-        this->max_distance = max_d;
+        // +1 to store a nullbyte
+        this->max_distance = max_d + 1;
         this->num_cigars = n;
         if (device) {
-            cudaMalloc((void**) &(this->data), this->cigar_size_bytes());
+            cudaMalloc((void**) &(this->data), this->cigars_size_bytes());
+            CUDA_CHECK_ERR
+            cudaMemset(this->data, 0, this->cigars_size_bytes());
             CUDA_CHECK_ERR
         }
         else {
-            this->data = (edit_cigar_t*)calloc(this->cigar_size_bytes(), 1);
+            this->data = (edit_cigar_t*)calloc(this->cigars_size_bytes(), 1);
             if (!this->data) {
                 fprintf(stderr, "Out of memory on host. (%s:%d)", __FILE__, __LINE__);
                 exit(1);
@@ -60,11 +63,11 @@ public:
     }
 
     __host__ void copyIn (Cigars device_cigars) {
-        cudaMemcpy(this->data, device_cigars.data, this->cigar_size_bytes(), cudaMemcpyDeviceToHost);
+        cudaMemcpy(this->data, device_cigars.data, this->cigars_size_bytes(), cudaMemcpyDeviceToHost);
         CUDA_CHECK_ERR;
     }
 private:
-    size_t cigar_size_bytes () {
+    size_t cigars_size_bytes () {
         return this->num_cigars * this->max_distance * sizeof(edit_cigar_t);
     }
     size_t max_distance;
