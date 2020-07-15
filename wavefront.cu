@@ -208,7 +208,15 @@ bool Sequences::GPU_prepare_memory_next_batch () {
     cudaMemcpy(this->sequences_device_ptr, this->elements[curr_position].text,
                (seq_size_bytes * 2) * curr_batch_size,
                cudaMemcpyHostToDevice);
-    CUDA_CHECK_ERR;
+    CUDA_CHECK_ERR
+
+    size_t offsets_size_bytes = OFFSETS_TOTAL_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
+    size_t total_offsets_size = offsets_size_bytes * this->batch_size;
+    cudaMemset(this->offsets_device_ptr, 0, total_offsets_size);
+    CUDA_CHECK_ERR
+
+    // Put all the cigars at 0 again
+    this->d_cigars.device_reset();
 
     return true;
 }

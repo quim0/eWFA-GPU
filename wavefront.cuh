@@ -84,6 +84,11 @@ public:
         CUDA_CHECK_ERR;
     }
 
+    __host__ void device_reset () {
+        cudaMemset(this->data, 0, this->cigars_size_bytes());
+        CUDA_CHECK_ERR
+    }
+
     __host__ void print_cigar (const int n) const {
         // Cigar is in reverse order
         edit_cigar_t* curr_cigar = this->get_cigar(n);
