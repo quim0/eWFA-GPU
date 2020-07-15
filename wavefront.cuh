@@ -24,6 +24,7 @@
 
 #include <cuda.h>
 #include <stdio.h>
+#include <string.h>
 #include "cuda_helpers.cuh"
 
 #define SEQ_TYPE char
@@ -60,6 +61,16 @@ public:
 
     __host__ __device__ edit_cigar_t* get_cigar (int n) const {
         return &this->data[n * this->max_distance];
+    }
+
+    __host__ void print_cigar (int n) {
+        // Cigar is in reverse order
+        edit_cigar_t* curr_cigar = this->get_cigar(n);
+        size_t cigar_len = strnlen(curr_cigar, this->max_distance);
+        for (int i=(cigar_len - 1); i >= 0; i--) {
+            printf("%c", curr_cigar[i]);
+        }
+        printf("\n");
     }
 
     __host__ void copyIn (Cigars device_cigars) {
@@ -123,11 +134,11 @@ public:
                                                 batch_idx(0),              \
                                                 d_cigars(
                                                     Cigars(batch_size,
-                                                           this->max_distance,
+                                                           seq_len * 2,
                                                            true)),         \
                                                 h_cigars(
                                                     Cigars(batch_size,
-                                                           this->max_distance,
+                                                           seq_len * 2,
                                                            false)) {
         // Initialize CPU memory
         this->offsets_host_ptr = (ewf_offset_t*)calloc(
