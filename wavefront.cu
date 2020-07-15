@@ -245,4 +245,6 @@ void Sequences::GPU_launch_wavefront_distance () {
     // Copy the all cigars back
     this->h_cigars.copyIn(this->d_cigars);
     this->h_cigars.print_cigar(0);
+    int curr_position = this->batch_idx * this->batch_size;
+    this->h_cigars.check_cigar(0, this->elements[curr_position]);
 }

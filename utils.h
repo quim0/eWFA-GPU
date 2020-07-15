@@ -26,34 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "wavefront.cuh"
-
-#ifdef DEBUG_MODE
-#define DEBUG(...) {\
-    char tmp[512];\
-    snprintf(tmp, 512, __VA_ARGS__); \
-    fprintf(stderr, "DEBUG: %s (%s:%d)\n", tmp, __FILE__, __LINE__); \
-    }
-#define CLOCK_INIT() struct timespec now, tmstart; double seconds;
-#define CLOCK_START() clock_gettime(CLOCK_REALTIME, &tmstart);
-#define CLOCK_STOP(text) \
-    clock_gettime(CLOCK_REALTIME, &now); \
-    seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9)); \
-    DEBUG("%s Wall time %fs", text, seconds);
-#else
-#define DEBUG(fmt, ...)
-#define CLOCK_INIT()
-#define CLOCK_START()
-#define CLOCK_STOP(text)
-#endif
-
-#define NOMEM_ERR_STR "Could not allocate memory.\n"
-
-#define WF_ERROR(...) fprintf(stderr, __VA_ARGS__)
-
-// TODO: Handle error before exiting? (free gpu memory?)
-#define WF_FATAL(...) { \
-    WF_ERROR(__VA_ARGS__); fflush(stdout); fflush(stderr); exit(1); \
-    }
+#include "logger.h"
 
 // TODO: Method to free the sequences memory
 class SequenceReader {

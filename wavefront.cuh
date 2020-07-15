@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "cuda_helpers.cuh"
+#include "logger.h"
 
 #define SEQ_TYPE char
 
@@ -37,6 +38,21 @@
 
 typedef int16_t ewf_offset_t;
 typedef char edit_cigar_t;
+
+#define OFFSETS_TOTAL_ELEMENTS(max_d) (max_d * max_d + (max_d * 2 + 1))
+#define OFFSETS_PTR(offsets_mem, d) (offsets_mem + ((d)*(d)) + (d))
+
+struct edit_wavefronts_t {
+    uint32_t d;
+    ewf_offset_t* offsets_base;
+};
+
+struct WF_element {
+    SEQ_TYPE* text;
+    SEQ_TYPE* pattern;
+    // Asume len(pattern) == len(text)
+    size_t len;
+};
 
 class Cigars {
 public:
@@ -59,11 +75,16 @@ public:
         }
     }
 
-    __host__ __device__ edit_cigar_t* get_cigar (int n) const {
+    __host__ __device__ edit_cigar_t* get_cigar (const int n) const {
         return &this->data[n * this->max_distance];
     }
 
-    __host__ void print_cigar (int n) {
+    __host__ void copyIn (const Cigars device_cigars) {
+        cudaMemcpy(this->data, device_cigars.data, this->cigars_size_bytes(), cudaMemcpyDeviceToHost);
+        CUDA_CHECK_ERR;
+    }
+
+    __host__ void print_cigar (const int n) const {
         // Cigar is in reverse order
         edit_cigar_t* curr_cigar = this->get_cigar(n);
         size_t cigar_len = strnlen(curr_cigar, this->max_distance);
@@ -73,9 +94,59 @@ public:
         printf("\n");
     }
 
-    __host__ void copyIn (Cigars device_cigars) {
-        cudaMemcpy(this->data, device_cigars.data, this->cigars_size_bytes(), cudaMemcpyDeviceToHost);
-        CUDA_CHECK_ERR;
+    __host__ bool check_cigar (const int n, const WF_element element) const {
+        const edit_cigar_t* curr_cigar = this->get_cigar(n);
+        const size_t cigar_len = strnlen(curr_cigar, this->max_distance);
+        int text_pos = 0, pattern_pos = 0;
+        // Cigar is reversed
+        for (int i=0; i<cigar_len; i++) {
+            edit_cigar_t curr_cigar_element = curr_cigar[cigar_len - i - 1];
+            switch (curr_cigar_element) {
+                case 'M':
+                    if (element.pattern[pattern_pos] != element.text[text_pos]) {
+                        DEBUG("Alignment not matching at CCIGAR index %d"
+                              " (pattern[%d] = %c != text[%d] = %c)",
+                              i, pattern_pos, element.pattern[pattern_pos],
+                              text_pos, element.text[text_pos]);
+                        return false;
+                    }
+                    ++pattern_pos;
+                    ++text_pos;
+                    break;
+                case 'I':
+                    ++text_pos;
+                    break;
+                case 'D':
+                    ++pattern_pos;
+                    break;
+                case 'X':
+                    if (element.pattern[pattern_pos] == element.text[text_pos]) {
+                        DEBUG("Alignment not mismatching at CCIGAR index %d"
+                              " (pattern[%d] = %c == text[%d] = %c)",
+                              i, pattern_pos, element.pattern[pattern_pos],
+                              text_pos, element.text[text_pos]);
+                        return false;
+                    }
+                    break;
+                default:
+                    WF_FATAL("Invalid CIGAR generated.");
+                    break;
+            }
+        }
+
+        if (pattern_pos != element.len) {
+            DEBUG("Alignment incorrect length, pattern-aligned: %d, "
+                  "pattern-length: %d.", pattern_pos, element.len);
+            return false;
+        }
+
+        if (text_pos != element.len) {
+            DEBUG("Alignment incorrect length, text-aligned: %d, "
+                  "text-length: %d.", text_pos, element.len);
+            return false;
+        }
+
+        return true;
     }
 private:
     size_t cigars_size_bytes () {
@@ -84,21 +155,6 @@ private:
     size_t max_distance;
     int num_cigars;
     edit_cigar_t *data;
-};
-
-#define OFFSETS_TOTAL_ELEMENTS(max_d) (max_d * max_d + (max_d * 2 + 1))
-#define OFFSETS_PTR(offsets_mem, d) (offsets_mem + ((d)*(d)) + (d))
-
-struct edit_wavefronts_t {
-    uint32_t d;
-    ewf_offset_t* offsets_base;
-};
-
-struct WF_element {
-    SEQ_TYPE* text;
-    SEQ_TYPE* pattern;
-    // Asume len(pattern) == len(text)
-    size_t len;
 };
 
 class Sequences {
