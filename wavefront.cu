@@ -224,15 +224,16 @@ bool Sequences::GPU_prepare_memory_next_batch () {
 
 void Sequences::GPU_launch_wavefront_distance () {
     // TODO: Determine better the number of threads
-    // For now, use 20% of the sequence length
-    int threads_x = this->sequence_len / 5;
-    threads_x = (threads_x > MAX_THREADS_PER_BLOCK) ?
-                                MAX_THREADS_PER_BLOCK : threads_x;
+    int threads_x = 32;
 
     int blocks_x;
     // Check if the current batch is smaller than "batch_size"
-    blocks_x = (this->batch_size > MAX_BLOCKS) ?
-                                    MAX_BLOCKS : this->batch_size;
+    size_t sequences_remaining = this->num_elements - this->batch_size * this->batch_idx;
+    if (sequences_remaining < this->batch_size)
+        blocks_x = sequences_remaining;
+    else
+        blocks_x = this->batch_size;
+    blocks_x = (blocks_x > MAX_BLOCKS) ?  MAX_BLOCKS : blocks_x;
 
     DEBUG("Launching wavefront alignment on GPU. %d elements with %d blocks "
           "of %d threads", blocks_x, blocks_x, threads_x);
@@ -242,7 +243,7 @@ void Sequences::GPU_launch_wavefront_distance () {
     CLOCK_INIT()
     CLOCK_START()
     // TODO
-    WF_edit_distance<<<numBlocks, 32>>>(this->d_elements,
+    WF_edit_distance<<<numBlocks, blockDim>>>(this->d_elements,
                                               this->d_wavefronts,
                                               this->max_distance,
                                               this->d_cigars);
@@ -254,5 +255,7 @@ void Sequences::GPU_launch_wavefront_distance () {
     this->h_cigars.copyIn(this->d_cigars);
     this->h_cigars.print_cigar(0);
     int curr_position = this->batch_idx * this->batch_size;
+#ifdef DEBUG_MODE
     this->h_cigars.check_cigar(0, this->elements[curr_position]);
+#endif
 }
