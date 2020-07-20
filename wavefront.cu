@@ -190,6 +190,11 @@ bool Sequences::GPU_memory_free () {
     return true;
 }
 
+bool Sequences::CPU_read_next_sequences () {
+    DEBUG("Reading next batch elements from the sequences file.");
+    return this->sequences_reader.read_batch_sequences();
+}
+
 bool Sequences::GPU_prepare_memory_next_batch () {
     // first "alginment" (sequence pair) of the current batch
     int curr_position = ++this->batch_idx * this->batch_size;
@@ -205,7 +210,7 @@ bool Sequences::GPU_prepare_memory_next_batch () {
 
     // Send the new text/pattern sequences to device
     size_t seq_size_bytes = this->sequence_len * sizeof(SEQ_TYPE);
-    cudaMemcpy(this->sequences_device_ptr, this->elements[curr_position].text,
+    cudaMemcpy(this->sequences_device_ptr, this->elements[0].text,
                (seq_size_bytes * 2) * curr_batch_size,
                cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR
@@ -260,7 +265,7 @@ void Sequences::GPU_launch_wavefront_distance () {
     // Assume num_alignments == num_blocks
     int total_corrects = 0;
     for (int i=0; i<blocks_x; i++)
-        if (this->h_cigars.check_cigar(i, this->elements[curr_position + i]))
+        if (this->h_cigars.check_cigar(i, this->elements[i]))
             total_corrects++;
 
     if (total_corrects == blocks_x)

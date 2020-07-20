@@ -25,9 +25,9 @@ void SequenceReader::initialize_sequences () {
     // Allocate memory for the array that will contain all the elements to
     // process.
     DEBUG("Trying to allocate memory to store all the sequences. (%zu bytes)",
-          this->num_sequences * sizeof(WF_element)
+          this->batch_size * sizeof(WF_element)
           );
-    this->sequences = (WF_element*)calloc(this->num_sequences, sizeof(WF_element));
+    this->sequences = (WF_element*)calloc(this->batch_size, sizeof(WF_element));
     if (this->sequences == NULL)
         WF_FATAL(NOMEM_ERR_STR);
     DEBUG("Sequences memory allocated (%p)", this->sequences);
@@ -40,6 +40,51 @@ size_t SequenceReader::sequence_buffer_size () {
     return this->seq_len + 2;
 }
 
+bool SequenceReader::skip_n_alignments (int n) {
+    size_t buf_size = this->sequence_buffer_size();
+    SEQ_TYPE* buf = this->create_sequence_buffer();
+
+    if (!fp)
+        this->fp = fopen(this->seq_file, "r");
+    if (!fp) {
+        WF_ERROR("Could not open the file %s\n", this->seq_file);
+        return false;
+    }
+
+    int idx = 0;
+    int num_seqs_to_skip = n * 2;
+
+    while (idx++ < num_seqs_to_skip && getline(&buf, &buf_size, this->fp) > 0);
+
+    free(buf);
+
+    if (idx < num_seqs_to_skip) {
+        WF_ERROR("Could not skip enough sequences.");
+        return false;
+    }
+
+    return true;
+}
+
+void SequenceReader::create_sequences_buffer () {
+    int bytes_to_alloc = this->batch_size * this->seq_len * 2 * sizeof(SEQ_TYPE);
+    DEBUG("Trying to allocate %d pinned memory MiB to store the sequences.",
+          bytes_to_alloc / (1 << 20));
+    cudaMallocHost((void**)&this->sequences_mem, bytes_to_alloc);
+    if (!this->sequences_mem)
+        WF_FATAL(NOMEM_ERR_STR);
+    DEBUG("Allocated %d pinned memory MiB to store the sequences.",
+          bytes_to_alloc / (1 << 20));
+}
+
+SEQ_TYPE* SequenceReader::get_sequences_buffer () {
+    if (this->sequences_mem == NULL) {
+        this->create_sequences_buffer();
+    }
+    return this->sequences_mem;
+    
+}
+
 SEQ_TYPE* SequenceReader::create_sequence_buffer () {
     // +1 to include the nullbyte
     SEQ_TYPE* buf = (SEQ_TYPE*)calloc(this->sequence_buffer_size(), sizeof(SEQ_TYPE));
@@ -49,13 +94,21 @@ SEQ_TYPE* SequenceReader::create_sequence_buffer () {
     return buf;
 }
 
-bool SequenceReader::read_sequences () {
+bool SequenceReader::read_n_sequences (int n) {
     if (this->seq_len == 0) {
         DEBUG("Sequence length specified is 0, nothing to do.");
         return true;
     }
 
-    FILE *fp = fopen(this->seq_file, "r");
+    if (n > this->batch_size) {
+        WF_ERROR("Number of alignments to read from file \"%s\"can not be "
+                 "bigger than the batch size (%d)", this->seq_file,
+                 this->batch_size);
+        return false;
+    }
+
+    if (!fp)
+        this->fp = fopen(this->seq_file, "r");
     if (!fp) {
         WF_ERROR("Could not open the file %s\n", this->seq_file);
         return false;
@@ -73,14 +126,7 @@ bool SequenceReader::read_sequences () {
     // The final nullbyte WILL NOT be stored as we already know the string size
     // num_sequences is the number of sequences pairs (pattern/text), so it's
     // nedded to double the space required.
-    SEQ_TYPE* seq_alloc = (SEQ_TYPE*)calloc(
-                                     this->num_sequences * (this->seq_len) * 2,
-                                     sizeof(SEQ_TYPE)
-                                     );
-    if (seq_alloc == NULL)
-        WF_FATAL(NOMEM_ERR_STR);
-    DEBUG("Allocating memory to store text/patterns on host (%zu bytes)",
-          this->num_sequences * (this->seq_len) * 2 * sizeof(SEQ_TYPE));
+    SEQ_TYPE* seq_alloc = this->get_sequences_buffer();
 
     bool retval = true;
 
@@ -90,7 +136,7 @@ bool SequenceReader::read_sequences () {
     // Sequence pair format in file:
     // >TEXTGGG
     // <PATTERN
-    while (sequence_idx < this->num_sequences && getline(&buf, &buf_size, fp) > 0) {
+    while (sequence_idx < n && getline(&buf, &buf_size, this->fp) > 0) {
         WF_element *curr_elem = &(this->sequences[sequence_idx]);
         // Pointer where the current sequence will be allocated in the big
         // memory chunck
@@ -128,6 +174,8 @@ bool SequenceReader::read_sequences () {
         sequence_idx = idx / 2;
         // First or second element of the sequence pair
         elem_idx = idx % 2;
+
+        this->num_sequences_read++;
     }
 
 #ifdef DEBUG_MODE
@@ -139,4 +187,11 @@ bool SequenceReader::read_sequences () {
 #endif
     free(buf);
     return retval;
+}
+
+void SequenceReader::destroy () {
+    cudaFree(sequences_mem);
+    this->sequences_mem = NULL;
+    free(sequences);
+    this->sequences = NULL;
 }

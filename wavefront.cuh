@@ -26,33 +26,15 @@
 #include <stdio.h>
 #include <string.h>
 #include "cuda_helpers.cuh"
+#include "wavefront_structures.h"
 #include "logger.h"
-
-#define SEQ_TYPE char
+#include "utils.h"
 
 // Limit to 8GiB to be safe
 #define MAX_GPU_SIZE (1L << 33)
 
 #define MAX_THREADS_PER_BLOCK 1024
 #define MAX_BLOCKS 2147483647
-
-typedef int16_t ewf_offset_t;
-typedef char edit_cigar_t;
-
-#define OFFSETS_TOTAL_ELEMENTS(max_d) (max_d * max_d + (max_d * 2 + 1))
-#define OFFSETS_PTR(offsets_mem, d) (offsets_mem + ((d)*(d)) + (d))
-
-struct edit_wavefronts_t {
-    uint32_t d;
-    ewf_offset_t* offsets_base;
-};
-
-struct WF_element {
-    SEQ_TYPE* text;
-    SEQ_TYPE* pattern;
-    // Asume len(pattern) == len(text)
-    size_t len;
-};
 
 class Cigars {
 public:
@@ -184,16 +166,20 @@ public:
     // Array of wavefronts on host for backtrace calculation
     edit_wavefronts_t* wavefronts;
 
+    SequenceReader sequences_reader;
+
     Cigars d_cigars;
     Cigars h_cigars;
 
-    Sequences (WF_element* e, size_t num_e, size_t seq_len, size_t batch_size) : \
+    Sequences (WF_element* e, size_t num_e, size_t seq_len, size_t batch_size,
+               SequenceReader reader) : \
                                                 elements(e),               \
                                                 num_elements(num_e),       \
                                                 sequence_len(seq_len),     \
     // TODO: Assume error of max 20%, arbitrary chose
                                                 max_distance(seq_len / 5), \
                                                 batch_size(batch_size),    \
+                                                sequences_reader(reader),  \
                                                 batch_idx(0),              \
                                                 d_cigars(
                                                     Cigars(batch_size,
@@ -222,6 +208,7 @@ public:
     }
     bool GPU_memory_init ();
     bool GPU_memory_free ();
+    bool CPU_read_next_sequences ();
     bool GPU_prepare_memory_next_batch ();
     void backtrace ();
     void GPU_launch_wavefront_distance ();

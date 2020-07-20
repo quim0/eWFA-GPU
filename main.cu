@@ -20,6 +20,7 @@
  */
 
 #include "utils.h"
+#include "wavefront.cuh"
 
 const char *USAGE_STR = "Usage:\n"
                         "WFA_edit_gpu <file> <sequence_length> <num_of_sequences> "
@@ -38,16 +39,19 @@ int main (int argc, char** argv) {
     if (batch_size > num_sequences)
         WF_FATAL("batch_size must be >= than the number of alignments.");
 
-    SequenceReader reader = SequenceReader(seq_file, seq_len, num_sequences);
-    if (!reader.read_sequences()) {
+    SequenceReader reader = SequenceReader(seq_file, seq_len, num_sequences, batch_size);
+    if (!reader.read_batch_sequences()) {
         WF_FATAL("Could not read the sequences from file %s\n", argv[1]);
     }
 
-    Sequences seqs = Sequences(reader.sequences, num_sequences, seq_len, batch_size);
+    Sequences seqs = Sequences(reader.sequences, num_sequences, seq_len, batch_size, reader);
+    seqs.CPU_read_next_sequences();
     seqs.GPU_memory_init();
     seqs.GPU_launch_wavefront_distance();
+    seqs.CPU_read_next_sequences();
     while (seqs.GPU_prepare_memory_next_batch()) {
         seqs.GPU_launch_wavefront_distance();
+        seqs.CPU_read_next_sequences();
     }
     seqs.GPU_memory_free();
     return 0;

@@ -25,7 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "wavefront.cuh"
+#include "wavefront_structures.h"
 #include "logger.h"
 
 // TODO: Method to free the sequences memory
@@ -39,26 +39,45 @@ public:
     // Number of sequences pairs in the "sequences" list and in the file
     size_t num_sequences;
 
+    FILE *fp;
+    // Chunk of memory where all the sequences will be stored, the final
+    // nullbytes doesn't need to be stored as we already know the sequence
+    // length.
+    SEQ_TYPE* sequences_mem;
+    size_t batch_size;
+    int num_sequences_read;
+
     // Array that will be filled with the sequences from the file
     WF_element* sequences;
 
-    SequenceReader (char* seq_file, size_t seq_len, size_t num_sequences) : \
+    SequenceReader (char* seq_file, size_t seq_len, size_t num_sequences,
+                                    size_t batch_size) :                    \
                                               seq_file(seq_file),           \
                                               seq_len(seq_len),             \
                                               num_sequences(num_sequences), \
-                                              sequences(NULL) {
+                                              batch_size(batch_size),       \
+                                              sequences(NULL),              \
+                                              sequences_mem(NULL),          \
+                                              fp(NULL),                     \
+                                              num_sequences_read(0) {
         DEBUG("SequenceReader created:\n"
               "    File: %s\n"
               "    Sequence length: %zu\n"
               "    Number of sequences: %zu", seq_file, seq_len, num_sequences);
     }
 
-    bool read_sequences ();
+    bool skip_n_alignments (int n);
+    bool read_n_sequences (int n);
+    bool read_batch_sequences () {
+        return read_n_sequences(this->batch_size);
+    }
+    void destroy ();
 
 private:
     void initialize_sequences ();
-    void free_sequences ();
     size_t sequence_buffer_size ();
+    void create_sequences_buffer ();
+    SEQ_TYPE* get_sequences_buffer ();
     SEQ_TYPE* create_sequence_buffer ();
 };
 
