@@ -260,7 +260,7 @@ void Sequences::GPU_launch_wavefront_distance () {
     // execution
     this->CPU_read_next_sequences();
 #endif
-    cudaDeviceSynchronize();
+    cudaStreamSynchronize(0);
     CUDA_CHECK_ERR;
     CLOCK_STOP("GPU wavefront alignment kernel executed.")
 
