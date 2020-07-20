@@ -254,14 +254,18 @@ void Sequences::GPU_launch_wavefront_distance () {
                                               this->d_wavefronts,
                                               this->max_distance,
                                               this->d_cigars);
+#ifndef DEBUG_MODE
+    // When debugging, the original sequences need to be preserved to be able to
+    // check the CIGARs, so it need to wait until the kernel finishes the
+    // execution
+    this->CPU_read_next_sequences();
+#endif
     cudaDeviceSynchronize();
     CUDA_CHECK_ERR;
     CLOCK_STOP("GPU wavefront alignment kernel executed.")
 
-    // Copy the all cigars back
     this->h_cigars.copyIn(this->d_cigars);
 #ifdef DEBUG_MODE
-    int curr_position = this->batch_idx * this->batch_size;
     // Assume num_alignments == num_blocks
     int total_corrects = 0;
     for (int i=0; i<blocks_x; i++)
@@ -272,5 +276,6 @@ void Sequences::GPU_launch_wavefront_distance () {
         DEBUG_GREEN("Correct alignments: %d/%d", total_corrects, blocks_x)
     else
         DEBUG_RED("Correct alignments: %d/%d", total_corrects, blocks_x)
+    this->CPU_read_next_sequences();
 #endif
 }

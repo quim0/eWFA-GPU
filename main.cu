@@ -48,10 +48,8 @@ int main (int argc, char** argv) {
     seqs.CPU_read_next_sequences();
     seqs.GPU_memory_init();
     seqs.GPU_launch_wavefront_distance();
-    seqs.CPU_read_next_sequences();
     while (seqs.GPU_prepare_memory_next_batch()) {
         seqs.GPU_launch_wavefront_distance();
-        seqs.CPU_read_next_sequences();
     }
     seqs.GPU_memory_free();
     return 0;
