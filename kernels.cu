@@ -90,14 +90,17 @@ __device__ void WF_backtrace (const edit_wavefronts_t* wavefronts,
 // efficient for memory acceses to store them as a "struct of arrays" (for loop)
 // ^ is this really true ????
 __device__ void WF_extend_kernel (const WF_element element,
-                                  edit_wavefronts_t* const wavefronts) {
+                                  edit_wavefronts_t* const wavefronts,
+                                  SEQ_TYPE* shared_text,
+                                  SEQ_TYPE* shared_pattern,
+                                  int seq_len) {
     ewf_offset_t * const offsets = OFFSETS_PTR(wavefronts->offsets_base, wavefronts->d);
 
     int tid = threadIdx.x;
     int tnum = blockDim.x;
 
-    const SEQ_TYPE* text = element.text;
-    const SEQ_TYPE* pattern = element.pattern;
+    const SEQ_TYPE* text = shared_text;
+    const SEQ_TYPE* pattern = shared_pattern;
 
     const int k_min = -wavefronts->d;
     const int k_max = wavefronts->d;
@@ -112,10 +115,38 @@ __device__ void WF_extend_kernel (const WF_element element,
         // Accumulate to register, is this really necessary or the compiler
         // would do it for us?
         int acc = 0;
-        // This will probably create a lot of divergence ???
-        // TODO: Also do this in parallel
-        while (v < element.len && h < element.len && pattern[v++] == text[h++])
+        while ((v + 4) < seq_len && (h + 4) < seq_len) {
+            int packed_pattern = 0;
+            int packed_text = 0;
+
+            uint32_t p1 = pattern[v] << 24;
+            uint32_t p2 = pattern[v + 1] << 16;
+            uint32_t p3 = pattern[v + 2] << 8;
+            uint32_t p4 = pattern[v + 3];
+
+            packed_pattern = p1 | p2 | p3 | p4;
+
+            uint32_t t1 = text[h] << 24;
+            uint32_t t2 = text[h + 1] << 16;
+            uint32_t t3 = text[h + 2] << 8;
+            uint32_t t4 = text[h + 3];
+
+            packed_text = t1 | t2 | t3 | t4;
+
+            int lz = __clz(packed_pattern ^ packed_text);
+            acc += lz / 8;
+            if (lz < 32) {
+                goto end_extend;
+            }
+
+            v += 4;
+            h += 4;
+        }
+
+        while (v < seq_len && h < seq_len && pattern[v++] == text[h++])
             acc++;
+
+end_extend:
         offsets[k] += acc;
     }
     __syncthreads();
@@ -158,8 +189,19 @@ __global__ void WF_edit_distance (const WF_element* elements,
                                   edit_wavefronts_t* const alignments,
                                   const size_t max_distance,
                                   const Cigars cigars) {
+    extern __shared__ uint8_t shared_mem_chunk[];
+    const int tid = threadIdx.x;
     const WF_element element = elements[blockIdx.x];
     edit_wavefronts_t* wavefronts = &(alignments[blockIdx.x]);
+    SEQ_TYPE* shared_text = (SEQ_TYPE*)&shared_mem_chunk[0];
+    SEQ_TYPE* shared_pattern = (SEQ_TYPE*)&shared_mem_chunk[element.len];
+    int seq_len = element.len;
+
+    // Put text and pattern to shared memory
+    for (int i=tid; i<element.len; i += blockDim.x) {
+        shared_text[i] = element.text[i];
+        shared_pattern[i] = element.pattern[i];
+    }
 
     const int target_k = EWAVEFRONT_DIAGONAL(element.len, element.len);
     const int target_k_abs = (target_k >= 0) ? target_k : -target_k;
@@ -168,7 +210,7 @@ __global__ void WF_edit_distance (const WF_element* elements,
 
     for (distance = 0; distance < max_distance; distance++) {
         wavefronts->d = distance;
-        WF_extend_kernel(element, wavefronts);
+        WF_extend_kernel(element, wavefronts, shared_text, shared_pattern, seq_len);
         ewf_offset_t* curr_offsets = OFFSETS_PTR(wavefronts->offsets_base, wavefronts->d);
         if (target_k_abs <= distance && curr_offsets[target_k] == target_offset)
             break;
@@ -178,7 +220,6 @@ __global__ void WF_edit_distance (const WF_element* elements,
     WF_backtrace(wavefronts, cigars, target_k);
 
 #ifdef DEBUG_MODE
-    const int tid = threadIdx.x;
     if (blockIdx.x == 0 && tid == 0) {
         if (distance == (max_distance - 1)) {
             // TODO

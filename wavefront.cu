@@ -240,10 +240,12 @@ void Sequences::GPU_launch_wavefront_distance () {
 
     dim3 numBlocks(blocks_x, 1);
     dim3 blockDim(threads_x, 1);
+
+    int shared_mem = this->sequence_len * 2; // text + pattern
     CLOCK_INIT()
     CLOCK_START()
     // TODO
-    WF_edit_distance<<<numBlocks, blockDim>>>(this->d_elements,
+    WF_edit_distance<<<numBlocks, blockDim, shared_mem>>>(this->d_elements,
                                               this->d_wavefronts,
                                               this->max_distance,
                                               this->d_cigars);
