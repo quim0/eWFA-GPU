@@ -66,6 +66,7 @@ bool SequenceReader::skip_n_alignments (int n) {
     return true;
 }
 
+#if 0
 void SequenceReader::create_sequences_buffer () {
     int bytes_to_alloc = this->batch_size * this->seq_len * 2 * sizeof(SEQ_TYPE);
     DEBUG("Trying to allocate %d pinned memory MiB to store the sequences.",
@@ -76,11 +77,14 @@ void SequenceReader::create_sequences_buffer () {
     DEBUG("Allocated %d pinned memory MiB to store the sequences.",
           bytes_to_alloc / (1 << 20));
 }
+#endif
 
 SEQ_TYPE* SequenceReader::get_sequences_buffer () {
+#if 0
     if (this->sequences_mem == NULL) {
         this->create_sequences_buffer();
     }
+#endif
     return this->sequences_mem;
     
 }

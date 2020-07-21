@@ -284,7 +284,7 @@ bool Sequences::prepare_next_batch () {
     // This is sync
     this->h_cigars.copyIn(this->d_cigars);
 
-    // Put all the cigars at 0 again
+    // Put all the device cigars at 0 again
     this->d_cigars.device_reset();
 
     return ret;

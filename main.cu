@@ -1,4 +1,4 @@
-/*
+/*;
  * Copyright (c) 2020 Quim Aguado
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
@@ -34,6 +34,7 @@ struct Parameters {
     size_t batch_size;
     unsigned int tid;
     unsigned int total_threads;
+    uint8_t* pinned_mem;
 };
 
 void * worker(void * tdata) {
@@ -52,7 +53,8 @@ void * worker(void * tdata) {
     }
 
     SequenceReader reader = SequenceReader(params->seq_file, params->seq_len,
-                                           seqs_to_process, params->batch_size);
+                                           seqs_to_process, params->batch_size,
+                                           (SEQ_TYPE*)params->pinned_mem);
 
     reader.skip_n_alignments(seqs_to_process * params->tid);
 
@@ -66,6 +68,8 @@ void * worker(void * tdata) {
         seqs.GPU_launch_wavefront_distance();
     } while (seqs.prepare_next_batch());
     seqs.GPU_memory_free();
+
+    DEBUG("Finished thread %d.", params->tid);
 
     return NULL;
 }
@@ -91,36 +95,50 @@ int main (int argc, char** argv) {
     if (threads == NULL)
         WF_FATAL(NOMEM_ERR_STR);
 
-    // Allocate pinned memory only once
-    //size_t pinned_memory_size_per_thread = 0
-    //       + (batch_size * seq_len * 2) * sizeof(SEQ_TYPE) // Sequeces buffer
-    //       ;
-    //size_t pinned_memory_needed = pinned_memory_size_per_thread * num_threads;
-    //DEBUG("Allocating %zu MiB of pinned memory", pinned_memory_needed / (1 << 20));
-    //uint8_t* pinned_memory;
-    //cudaMallocHost(&pinned_memory, pinned_memory_needed);
-    //if (!pinned_memory)
-    //    WF_FATAL(NOMEM_ERR_STR)
+    // Allocate a single chunk of pinned memory
+    size_t pinned_mem_per_thread = batch_size * seq_len * 2 * sizeof(SEQ_TYPE); // Sequences buffer
+    size_t total_pinned_mem = pinned_mem_per_thread * num_threads;
+    uint8_t* pinned_mem;
+    cudaMallocHost(&pinned_mem, total_pinned_mem);
+    CUDA_CHECK_ERR
+    if (!pinned_mem)
+        WF_FATAL(NOMEM_ERR_STR)
+
     
-    for (unsigned int i=0; i<num_threads; i++) {
-        Parameters params;
-        params.seq_file = seq_file;
-        params.seq_len = seq_len;
-        params.num_sequences = num_sequences;
-        params.batch_size = batch_size;
-        params.tid = i;
-        params.total_threads = num_threads;
-        //params.pinned_memory = pinned_memory + (pinned_memory_size_per_thread * i);
-        DEBUG("Launching thread %d", params.tid);
-        if (pthread_create(&threads[i], NULL, worker, &params))
+    Parameters *params_array = (Parameters*)calloc(num_threads, sizeof(Parameters));
+    
+    for (unsigned int i=1; i<num_threads; i++) {
+        Parameters *params = &params_array[i];
+        params->seq_file = seq_file;
+        params->seq_len = seq_len;
+        params->num_sequences = num_sequences;
+        params->batch_size = batch_size;
+        params->tid = i;
+        params->total_threads = num_threads;
+        params->pinned_mem = pinned_mem + (pinned_mem_per_thread * i);
+        DEBUG("Launching thread %d", params->tid);
+        if (pthread_create(&threads[i], NULL, worker, params))
             WF_FATAL("Can not create threads.");
     }
 
-    for (int i=0; i<num_threads; i++) {
+    Parameters *params = &params_array[0];
+    params->seq_file = seq_file;
+    params->seq_len = seq_len;
+    params->num_sequences = num_sequences;
+    params->batch_size = batch_size;
+    params->tid = 0;
+    params->total_threads = num_threads;
+    params->pinned_mem = pinned_mem;
+    worker(params);
+
+    for (int i=1; i<num_threads; i++) {
         // tid is i+1 because thread 0 is the thread that launches the others
         if (pthread_join(threads[i], NULL))
             WF_FATAL("Can not join thread.");
     }
+
+    free(params_array);
+    free(threads);
 
     return 0;
 }

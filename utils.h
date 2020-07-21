@@ -51,13 +51,13 @@ public:
     WF_element* sequences;
 
     SequenceReader (char* seq_file, size_t seq_len, size_t num_sequences,
-                                    size_t batch_size) : \
+                                    size_t batch_size, SEQ_TYPE* seq_mem) : \
                                               seq_file(seq_file),           \
                                               seq_len(seq_len),             \
                                               num_sequences(num_sequences), \
                                               batch_size(batch_size),       \
                                               sequences(NULL),              \
-                                              sequences_mem(NULL), \
+                                              sequences_mem(seq_mem),       \
                                               fp(NULL),                     \
                                               num_sequences_read(0) {
         DEBUG("SequenceReader created:\n"
@@ -76,7 +76,7 @@ public:
 private:
     void initialize_sequences ();
     size_t sequence_buffer_size ();
-    void create_sequences_buffer ();
+    //void create_sequences_buffer ();
     SEQ_TYPE* get_sequences_buffer ();
     SEQ_TYPE* create_sequence_buffer ();
 };
