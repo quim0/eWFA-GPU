@@ -62,10 +62,9 @@ void * worker(void * tdata) {
 
     Sequences seqs = Sequences(reader.sequences, seqs_to_process, params->seq_len, params->batch_size, reader);
     seqs.GPU_memory_init();
-    seqs.GPU_launch_wavefront_distance();
-    while (seqs.GPU_prepare_memory_next_batch()) {
+    do {
         seqs.GPU_launch_wavefront_distance();
-    }
+    } while (seqs.prepare_next_batch());
     seqs.GPU_memory_free();
 
     return NULL;
@@ -88,12 +87,20 @@ int main (int argc, char** argv) {
     if (batch_size > num_sequences)
         WF_FATAL("batch_size must be >= than the number of alignments.");
 
-    DEBUG("NUM T: %d", num_threads);
-
-    // -1 because one thread is the current thread
     pthread_t *threads = (pthread_t*)calloc(num_threads, sizeof(pthread_t));
     if (threads == NULL)
         WF_FATAL(NOMEM_ERR_STR);
+
+    // Allocate pinned memory only once
+    //size_t pinned_memory_size_per_thread = 0
+    //       + (batch_size * seq_len * 2) * sizeof(SEQ_TYPE) // Sequeces buffer
+    //       ;
+    //size_t pinned_memory_needed = pinned_memory_size_per_thread * num_threads;
+    //DEBUG("Allocating %zu MiB of pinned memory", pinned_memory_needed / (1 << 20));
+    //uint8_t* pinned_memory;
+    //cudaMallocHost(&pinned_memory, pinned_memory_needed);
+    //if (!pinned_memory)
+    //    WF_FATAL(NOMEM_ERR_STR)
     
     for (unsigned int i=0; i<num_threads; i++) {
         Parameters params;
@@ -103,6 +110,7 @@ int main (int argc, char** argv) {
         params.batch_size = batch_size;
         params.tid = i;
         params.total_threads = num_threads;
+        //params.pinned_memory = pinned_memory + (pinned_memory_size_per_thread * i);
         DEBUG("Launching thread %d", params.tid);
         if (pthread_create(&threads[i], NULL, worker, &params))
             WF_FATAL("Can not create threads.");

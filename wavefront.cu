@@ -65,9 +65,9 @@ bool Sequences::GPU_memory_init () {
     // device pointers here and then do a single memcpy. This is done to avoid
     // doing a cudaMemcpy on each iteration of the loop, which dramatically
     // drops the performance.
-    WF_element *tmp_wf_elements_host;
-    cudaMallocHost((void**)&tmp_wf_elements_host, this->batch_size * sizeof(WF_element));
-    CUDA_CHECK_ERR;
+    WF_element* tmp_wf_elements_host = (WF_element*)calloc(this->batch_size, sizeof(WF_element));
+    if (!tmp_wf_elements_host)
+        WF_FATAL(NOMEM_ERR_STR)
 
     // TODO: Check if it's better to make this calculation in a kernel instead
     // of memcpy the data to the device.
@@ -83,7 +83,7 @@ bool Sequences::GPU_memory_init () {
     cudaMemcpy(this->d_elements, tmp_wf_elements_host,
                this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR;
-    cudaFreeHost(tmp_wf_elements_host);
+    free(tmp_wf_elements_host);
 
 #ifdef DEBUG_MODE
     size_t total_memory  = req_memory + seq_size_bytes * 2 * this->batch_size;
@@ -140,8 +140,8 @@ bool Sequences::GPU_memory_init () {
     // pointers inside GPU, the device pointers results are saved on host RAM,
     // and then send the data to device just once.
     edit_wavefronts_t *tmp_host_wavefronts;
-    cudaMallocHost((void**)&tmp_host_wavefronts, this->batch_size * sizeof(edit_wavefronts_t));
-    CUDA_CHECK_ERR;
+    tmp_host_wavefronts = (edit_wavefronts_t*)calloc(this->batch_size,
+                                                     sizeof(edit_wavefronts_t));
 
     for (int i=0; i<this->batch_size; i++) {
         ewf_offset_t *curr_offset = (ewf_offset_t*)(base_ptr + i * offsets_size_bytes);
@@ -154,7 +154,7 @@ bool Sequences::GPU_memory_init () {
                req_memory, cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR;
 
-    cudaFreeHost(tmp_host_wavefronts);
+    free(tmp_host_wavefronts);
 
 #ifdef DEBUG_MODE
     total_memory = req_memory + total_offsets_size;
@@ -210,18 +210,15 @@ bool Sequences::GPU_prepare_memory_next_batch () {
 
     // Send the new text/pattern sequences to device
     size_t seq_size_bytes = this->sequence_len * sizeof(SEQ_TYPE);
-    cudaMemcpy(this->sequences_device_ptr, this->elements[0].text,
+    cudaMemcpyAsync(this->sequences_device_ptr, this->elements[0].text,
                (seq_size_bytes * 2) * curr_batch_size,
-               cudaMemcpyHostToDevice);
+               cudaMemcpyHostToDevice, this->HtD_stream);
     CUDA_CHECK_ERR
 
     size_t offsets_size_bytes = OFFSETS_TOTAL_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
     size_t total_offsets_size = offsets_size_bytes * this->batch_size;
-    cudaMemset(this->offsets_device_ptr, 0, total_offsets_size);
+    cudaMemsetAsync(this->offsets_device_ptr, 0, total_offsets_size, this->HtD_stream);
     CUDA_CHECK_ERR
-
-    // Put all the cigars at 0 again
-    this->d_cigars.device_reset();
 
     return true;
 }
@@ -247,9 +244,11 @@ void Sequences::GPU_launch_wavefront_distance () {
     dim3 blockDim(threads_x, 1);
 
     int shared_mem = this->sequence_len * 2; // text + pattern
-    CLOCK_INIT()
-    CLOCK_START()
-    // TODO
+
+    // Make sure that text and patterns are copied
+    cudaStreamSynchronize(this->HtD_stream);
+    CUDA_CHECK_ERR;
+
     WF_edit_distance<<<numBlocks, blockDim, shared_mem>>>(this->d_elements,
                                               this->d_wavefronts,
                                               this->max_distance,
@@ -260,13 +259,8 @@ void Sequences::GPU_launch_wavefront_distance () {
     // execution
     this->CPU_read_next_sequences();
 #endif
-    cudaStreamSynchronize(0);
-    CUDA_CHECK_ERR;
-    CLOCK_STOP("GPU wavefront alignment kernel executed.")
-
-    this->h_cigars.copyIn(this->d_cigars);
 #ifdef DEBUG_MODE
-    // Assume num_alignments == num_blocks
+    this->h_cigars.copyIn(this->d_cigars);
     int total_corrects = 0;
     for (int i=0; i<blocks_x; i++)
         if (this->h_cigars.check_cigar(i, this->elements[i]))
@@ -278,4 +272,20 @@ void Sequences::GPU_launch_wavefront_distance () {
         DEBUG_RED("Correct alignments: %d/%d", total_corrects, blocks_x)
     this->CPU_read_next_sequences();
 #endif
+    cudaStreamSynchronize(0);
+}
+
+// Returns false when everything is comple
+bool Sequences::prepare_next_batch () {
+    bool ret;
+    // This is async
+    ret = this->GPU_prepare_memory_next_batch();
+
+    // This is sync
+    this->h_cigars.copyIn(this->d_cigars);
+
+    // Put all the cigars at 0 again
+    this->d_cigars.device_reset();
+
+    return ret;
 }

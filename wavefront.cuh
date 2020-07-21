@@ -49,7 +49,7 @@ public:
             CUDA_CHECK_ERR
         }
         else {
-            this->data = (edit_cigar_t*)calloc(this->cigars_size_bytes(), 1);
+            cudaMallocHost((void**)&this->data, this->cigars_size_bytes());
             if (!this->data) {
                 fprintf(stderr, "Out of memory on host. (%s:%d)", __FILE__, __LINE__);
                 exit(1);
@@ -171,6 +171,8 @@ public:
     Cigars d_cigars;
     Cigars h_cigars;
 
+    cudaStream_t HtD_stream;
+
     Sequences (WF_element* e, size_t num_e, size_t seq_len, size_t batch_size,
                SequenceReader reader) : \
                                                 elements(e),               \
@@ -205,15 +207,20 @@ public:
             fprintf(stderr, "Out of memory on CPU. (%s:%d)", __FILE__, __LINE__);
             exit(1);
         }
+
+        // TODO: Destroy stream
+        cudaStreamCreate(&this->HtD_stream);
+        CUDA_CHECK_ERR
     }
     bool GPU_memory_init ();
     bool GPU_memory_free ();
-    bool CPU_read_next_sequences ();
-    bool GPU_prepare_memory_next_batch ();
     void backtrace ();
     void GPU_launch_wavefront_distance ();
+    bool prepare_next_batch ();
 
 private:
+    bool CPU_read_next_sequences ();
+    bool GPU_prepare_memory_next_batch ();
     SEQ_TYPE* sequences_device_ptr;
     ewf_offset_t* offsets_device_ptr;
     ewf_offset_t* offsets_host_ptr;
