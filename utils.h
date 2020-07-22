@@ -74,6 +74,7 @@ public:
         memset(this->get_sequences_buffer(), 0, this->max_seq_len * 2 * this->batch_size);
         return read_n_sequences(this->batch_size);
     }
+    SEQ_TYPE* get_sequences_buffer () const;
     void destroy ();
 
 private:
@@ -81,7 +82,6 @@ private:
     size_t sequence_buffer_size ();
     //void create_sequences_buffer ();
     SEQ_TYPE* create_sequence_buffer ();
-    SEQ_TYPE* get_sequences_buffer () const;
 };
 
 #endif // Header guard UTLS_H

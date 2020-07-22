@@ -81,20 +81,26 @@ public:
         printf("\n");
     }
 
-    __host__ bool check_cigar (const int n, const WF_element element) const {
+    __host__ bool check_cigar (const int n, const WF_element element,
+                               const SEQ_TYPE* seq_base_ptr,
+                               const size_t max_seq_len) const {
         const edit_cigar_t* curr_cigar = this->get_cigar(n);
         const size_t cigar_len = strnlen(curr_cigar, this->max_distance);
         int text_pos = 0, pattern_pos = 0;
+        SEQ_TYPE* text = TEXT_PTR(element.alignment_idx, seq_base_ptr,
+                                  max_seq_len);
+        SEQ_TYPE* pattern = PATTERN_PTR(element.alignment_idx, seq_base_ptr,
+                                        max_seq_len);
         // Cigar is reversed
         for (int i=0; i<cigar_len; i++) {
             edit_cigar_t curr_cigar_element = curr_cigar[cigar_len - i - 1];
             switch (curr_cigar_element) {
                 case 'M':
-                    if (element.pattern[pattern_pos] != element.text[text_pos]) {
-                        DEBUG("Alignment not matching at CCIGAR index %d"
-                              " (pattern[%d] = %c != text[%d] = %c)",
-                              i, pattern_pos, element.pattern[pattern_pos],
-                              text_pos, element.text[text_pos]);
+                    if (pattern[pattern_pos] != text[text_pos]) {
+                        //DEBUG("Alignment not matching at CCIGAR index %d"
+                        //      " (pattern[%d] = %c != text[%d] = %c)",
+                        //      i, pattern_pos, pattern[pattern_pos],
+                        //      text_pos, text[text_pos]);
                         return false;
                     }
                     ++pattern_pos;
@@ -107,11 +113,11 @@ public:
                     ++pattern_pos;
                     break;
                 case 'X':
-                    if (element.pattern[pattern_pos] == element.text[text_pos]) {
-                        DEBUG("Alignment not mismatching at CCIGAR index %d"
-                              " (pattern[%d] = %c == text[%d] = %c)",
-                              i, pattern_pos, element.pattern[pattern_pos],
-                              text_pos, element.text[text_pos]);
+                    if (pattern[pattern_pos] == text[text_pos]) {
+                        //DEBUG("Alignment not mismatching at CCIGAR index %d"
+                        //      " (pattern[%d] = %c == text[%d] = %c)",
+                        //      i, pattern_pos, pattern[pattern_pos],
+                        //      text_pos, text[text_pos]);
                         return false;
                     }
                     ++pattern_pos;
@@ -124,14 +130,14 @@ public:
         }
 
         if (pattern_pos != element.plen) {
-            DEBUG("Alignment incorrect length, pattern-aligned: %d, "
-                  "pattern-length: %zu.", pattern_pos, element.plen);
+            //DEBUG("Alignment incorrect length, pattern-aligned: %d, "
+            //      "pattern-length: %zu.", pattern_pos, element.plen);
             return false;
         }
 
         if (text_pos != element.tlen) {
-            DEBUG("Alignment incorrect length, text-aligned: %d, "
-                  "text-length: %zu", text_pos, element.tlen);
+            //DEBUG("Alignment incorrect length, text-aligned: %d, "
+            //      "text-length: %zu", text_pos, element.tlen);
             return false;
         }
 

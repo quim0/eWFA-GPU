@@ -42,6 +42,7 @@ size_t SequenceReader::sequence_buffer_size () {
 }
 
 bool SequenceReader::skip_n_alignments (int n) {
+    DEBUG("Skipping %d alignments.", n);
     size_t buf_size = this->sequence_buffer_size();
     SEQ_TYPE* buf = this->create_sequence_buffer();
 
@@ -136,14 +137,14 @@ bool SequenceReader::read_n_sequences (int n) {
     bool retval = true;
 
     uint32_t idx = 0;
-    int sequence_idx = 0;
+    int alignment_idx = 0;
     int elem_idx = 0;
     // Sequence pair format in file:
     // >TEXTGGG
     // <PATTERN
     ssize_t length;
-    while (sequence_idx < n && (length = getline(&buf, &buf_size, this->fp)) > 0) {
-        WF_element *curr_elem = &(this->sequences[sequence_idx]);
+    while (alignment_idx < n && (length = getline(&buf, &buf_size, this->fp)) > 0) {
+        WF_element *curr_elem = &(this->sequences[alignment_idx]);
         // Pointer where the current sequence will be allocated in the big
         // memory chunck
         SEQ_TYPE* curr_seq_ptr = this->get_sequences_buffer() + idx * this->max_seq_len;
@@ -159,7 +160,7 @@ bool SequenceReader::read_n_sequences (int n) {
             }
             // +1 to avoid the '>' character
             memcpy(curr_seq_ptr, buf + 1, length - 2);
-            curr_elem->text = curr_seq_ptr;
+            curr_elem->alignment_idx = alignment_idx;
             curr_elem->tlen = length - 2; // -1 for the initial >, -1 for \n
         } else if (elem_idx == 1) {
             // Second element of the sequence (PATTERN)
@@ -172,13 +173,12 @@ bool SequenceReader::read_n_sequences (int n) {
             }
             // +1 to avoid the '<' character
             memcpy(curr_seq_ptr, buf + 1, length - 2);
-            curr_elem->pattern= curr_seq_ptr;
             curr_elem->plen = length - 2; // -1 for <, -1 for \n
         }
 
         idx++;
         // Current sequence pair
-        sequence_idx = idx / 2;
+        alignment_idx = idx / 2;
         // First or second element of the sequence pair
         elem_idx = idx % 2;
 
@@ -188,7 +188,7 @@ bool SequenceReader::read_n_sequences (int n) {
 #ifdef DEBUG_MODE
     if (retval) {
         DEBUG("File read and sequences stored.\n"
-              "    First sequece: %.5s...", this->sequences[0].text);
+              "    First sequece: %.5s...", this->get_sequences_buffer());
     } else
         DEBUG("There were some errors while processing the file.");
 #endif

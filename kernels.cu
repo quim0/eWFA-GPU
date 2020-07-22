@@ -188,6 +188,7 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts) {
 
 __global__ void WF_edit_distance (const WF_element* elements,
                                   edit_wavefronts_t* const alignments,
+                                  SEQ_TYPE* sequences_base_ptr,
                                   const size_t max_distance,
                                   const size_t max_seq_len,
                                   const Cigars cigars) {
@@ -199,15 +200,17 @@ __global__ void WF_edit_distance (const WF_element* elements,
     SEQ_TYPE* shared_pattern = (SEQ_TYPE*)&shared_mem_chunk[max_seq_len];
     int text_len = element.tlen;
     int pattern_len = element.plen;
+    SEQ_TYPE* text = TEXT_PTR(element.alignment_idx, sequences_base_ptr, max_seq_len);
+    SEQ_TYPE* pattern = PATTERN_PTR(element.alignment_idx, sequences_base_ptr, max_seq_len);
 
     // Put text and pattern to shared memory
     // TODO: Separated loops use better the cache?
     for (int i=tid; i<max_seq_len; i += blockDim.x) {
-        shared_text[i] = element.text[i];
+        shared_text[i] = text[i];
     }
 
     for (int i=tid; i<max_seq_len; i += blockDim.x) {
-        shared_pattern[i] = element.pattern[i];
+        shared_pattern[i] = pattern[i];
     }
 
     const int target_k = EWAVEFRONT_DIAGONAL(text_len, pattern_len);
@@ -233,14 +236,14 @@ __global__ void WF_edit_distance (const WF_element* elements,
             // TODO
             printf("Max distance reached!!!\n");
         }
-        char tmp = element.text[text_len];
-        element.text[text_len] = '\0';
-        printf("TEXT: %s\n", element.text);
-        element.text[text_len] = tmp;
-        tmp = element.pattern[pattern_len];
-        element.pattern[pattern_len] = '\0';
-        printf("PATTERN: %s\n", element.pattern);
-        element.pattern[pattern_len] = tmp;
+        char tmp = text[text_len];
+        text[text_len] = '\0';
+        printf("TEXT: %s\n", text);
+        text[text_len] = tmp;
+        tmp = pattern[pattern_len];
+        pattern[pattern_len] = '\0';
+        printf("PATTERN: %s\n", pattern);
+        pattern[pattern_len] = tmp;
         printf("Distance: %d\n", distance);
     }
 #endif

@@ -37,9 +37,13 @@ struct edit_wavefronts_t {
     ewf_offset_t* offsets_base;
 };
 
+#define TEXT_PTR(idx, base_ptr, max_seq_len) ((SEQ_TYPE*)(base_ptr + idx * 2 * max_seq_len))
+#define PATTERN_PTR(idx, base_ptr, max_seq_len) ((SEQ_TYPE*)(base_ptr + (idx * 2 + 1) * max_seq_len))
+
 struct WF_element {
-    SEQ_TYPE* text;
-    SEQ_TYPE* pattern;
+    // With the idx, the max_seq_length and the sequences memory base pointer,
+    // is possible to calculate the text/pattern address
+    int alignment_idx;
     size_t tlen;
     size_t plen;
 };
