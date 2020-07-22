@@ -40,8 +40,8 @@ struct edit_wavefronts_t {
 struct WF_element {
     SEQ_TYPE* text;
     SEQ_TYPE* pattern;
-    // Asume len(pattern) == len(text)
-    size_t len;
+    size_t tlen;
+    size_t plen;
 };
 
 #endif

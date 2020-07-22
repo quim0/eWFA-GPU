@@ -123,15 +123,15 @@ public:
             }
         }
 
-        if (pattern_pos != element.len) {
+        if (pattern_pos != element.plen) {
             DEBUG("Alignment incorrect length, pattern-aligned: %d, "
-                  "pattern-length: %d.", pattern_pos, element.len);
+                  "pattern-length: %zu.", pattern_pos, element.plen);
             return false;
         }
 
-        if (text_pos != element.len) {
+        if (text_pos != element.tlen) {
             DEBUG("Alignment incorrect length, text-aligned: %d, "
-                  "text-length: %d.", text_pos, element.len);
+                  "text-length: %zu", text_pos, element.tlen);
             return false;
         }
 
@@ -156,7 +156,6 @@ public:
     size_t num_elements;
 
     size_t max_distance;
-    size_t sequence_len;
     size_t batch_size;
     // Current batch index
     int batch_idx;
@@ -177,7 +176,6 @@ public:
                SequenceReader reader) : \
                                                 elements(e),               \
                                                 num_elements(num_e),       \
-                                                sequence_len(seq_len),     \
     // TODO: Assume error of max 20%, arbitrary chose
                                                 max_distance(seq_len / 5), \
                                                 batch_size(batch_size),    \

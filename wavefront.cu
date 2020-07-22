@@ -45,8 +45,8 @@ bool Sequences::GPU_memory_init () {
     // Allocate a big chunk of memory only once for the different patterns and
     // texts
     SEQ_TYPE* base_ptr;
-    size_t seq_size_bytes = this->sequence_len * sizeof(SEQ_TYPE);
-    // *2 sequences per element (pattern and text)
+    size_t seq_size_bytes = this->sequences_reader.max_seq_len * sizeof(SEQ_TYPE);
+    // * 2 sequences per element (pattern and text)
     cudaMalloc((void **) &(base_ptr),
                (seq_size_bytes * 2) * this->batch_size);
     CUDA_CHECK_ERR;
@@ -74,11 +74,14 @@ bool Sequences::GPU_memory_init () {
     // += 2 because every element have two sequences (pattern and text)
     for (int i=0; i<(this->batch_size * 2); i += 2) {
         WF_element *tmp_host_elem = &tmp_wf_elements_host[i / 2];
-        SEQ_TYPE* seq1 = (SEQ_TYPE*)(base_ptr + i * seq_size_bytes);
-        SEQ_TYPE* seq2 = (SEQ_TYPE*)(base_ptr + (i + 1) * seq_size_bytes);
+        const WF_element curr_element = this->elements[i / 2];
+        const size_t max_seq_len = this->sequences_reader.max_seq_len;
+        SEQ_TYPE* seq1 = (SEQ_TYPE*)(base_ptr + i * max_seq_len);
+        SEQ_TYPE* seq2 = (SEQ_TYPE*)(base_ptr + (i + 1) * max_seq_len);
         tmp_host_elem->text = seq1;
         tmp_host_elem->pattern = seq2;
-        tmp_host_elem->len = this->sequence_len;
+        tmp_host_elem->tlen = curr_element.tlen;
+        tmp_host_elem->plen = curr_element.plen;
     }
     cudaMemcpy(this->d_elements, tmp_wf_elements_host,
                this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice);
@@ -209,11 +212,36 @@ bool Sequences::GPU_prepare_memory_next_batch () {
                             (this->num_elements - curr_position) : this->batch_size;
 
     // Send the new text/pattern sequences to device
-    size_t seq_size_bytes = this->sequence_len * sizeof(SEQ_TYPE);
+    size_t seq_size_bytes = this->sequences_reader.max_seq_len * sizeof(SEQ_TYPE);
     cudaMemcpyAsync(this->sequences_device_ptr, this->elements[0].text,
                (seq_size_bytes * 2) * curr_batch_size,
                cudaMemcpyHostToDevice, this->HtD_stream);
     CUDA_CHECK_ERR
+
+    WF_element* tmp_wf_elements_host = (WF_element*)calloc(this->batch_size, sizeof(WF_element));
+    if (!tmp_wf_elements_host)
+        WF_FATAL(NOMEM_ERR_STR)
+
+    // Send the new length of text/patterns
+    // TODO: Check if it's better to make this calculation in a kernel instead
+    // of memcpy the data to the device.
+    // += 2 because every element have two sequences (pattern and text)
+    for (int i=0; i<(this->batch_size * 2); i += 2) {
+        WF_element *tmp_host_elem = &tmp_wf_elements_host[i / 2];
+        const WF_element curr_element = this->elements[i / 2];
+        const size_t max_seq_len = this->sequences_reader.max_seq_len;
+        SEQ_TYPE* seq1 = (SEQ_TYPE*)(this->sequences_device_ptr + i * max_seq_len);
+        SEQ_TYPE* seq2 = (SEQ_TYPE*)(this->sequences_device_ptr + (i + 1) * max_seq_len);
+        tmp_host_elem->text = seq1;
+        tmp_host_elem->pattern = seq2;
+        tmp_host_elem->tlen = curr_element.tlen;
+        tmp_host_elem->plen = curr_element.plen;
+    }
+    cudaMemcpyAsync(this->d_elements, tmp_wf_elements_host,
+               this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice,
+               this->HtD_stream);
+    CUDA_CHECK_ERR;
+    free(tmp_wf_elements_host);
 
     size_t offsets_size_bytes = OFFSETS_TOTAL_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
     size_t total_offsets_size = offsets_size_bytes * this->batch_size;
@@ -243,7 +271,7 @@ void Sequences::GPU_launch_wavefront_distance () {
     dim3 numBlocks(blocks_x, 1);
     dim3 blockDim(threads_x, 1);
 
-    int shared_mem = this->sequence_len * 2; // text + pattern
+    int shared_mem = this->sequences_reader.max_seq_len * 2; // text + pattern
 
     // Make sure that text and patterns are copied
     cudaStreamSynchronize(this->HtD_stream);
@@ -252,6 +280,7 @@ void Sequences::GPU_launch_wavefront_distance () {
     WF_edit_distance<<<numBlocks, blockDim, shared_mem>>>(this->d_elements,
                                               this->d_wavefronts,
                                               this->max_distance,
+                                              this->sequences_reader.max_seq_len,
                                               this->d_cigars);
 #ifndef DEBUG_MODE
     // When debugging, the original sequences need to be preserved to be able to

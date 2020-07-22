@@ -32,10 +32,10 @@
 class SequenceReader {
 public:
     char *seq_file;
-    // Length of each sequence (all sequences must have the same number of
-    // elements in this version)
-    // TODO: All elements always have the same number of elements?
+    // Average length of the sequences
     size_t seq_len;
+    // Maximum sequence length if error rate is 100%
+    size_t max_seq_len;
     // Number of sequences pairs in the "sequences" list and in the file
     size_t num_sequences;
 
@@ -44,6 +44,7 @@ public:
     // nullbytes doesn't need to be stored as we already know the sequence
     // length.
     SEQ_TYPE* sequences_mem;
+
     size_t batch_size;
     int num_sequences_read;
 
@@ -54,6 +55,7 @@ public:
                                     size_t batch_size, SEQ_TYPE* seq_mem) : \
                                               seq_file(seq_file),           \
                                               seq_len(seq_len),             \
+                                              max_seq_len(seq_len * 2),     \
                                               num_sequences(num_sequences), \
                                               batch_size(batch_size),       \
                                               sequences(NULL),              \
@@ -62,13 +64,14 @@ public:
                                               num_sequences_read(0) {
         DEBUG("SequenceReader created:\n"
               "    File: %s\n"
-              "    Sequence length: %zu\n"
+              "    Sequence avg length: %zu\n"
               "    Number of sequences: %zu", seq_file, seq_len, num_sequences);
     }
 
     bool skip_n_alignments (int n);
     bool read_n_sequences (int n);
     bool read_batch_sequences () {
+        memset(this->get_sequences_buffer(), 0, this->max_seq_len * 2 * this->batch_size);
         return read_n_sequences(this->batch_size);
     }
     void destroy ();
@@ -77,8 +80,8 @@ private:
     void initialize_sequences ();
     size_t sequence_buffer_size ();
     //void create_sequences_buffer ();
-    SEQ_TYPE* get_sequences_buffer ();
     SEQ_TYPE* create_sequence_buffer ();
+    SEQ_TYPE* get_sequences_buffer () const;
 };
 
 #endif // Header guard UTLS_H

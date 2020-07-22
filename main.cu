@@ -62,7 +62,8 @@ void * worker(void * tdata) {
         WF_FATAL("[Thread %d] Could not read the sequences from file %s\n", params->tid, params->seq_file);
     }
 
-    Sequences seqs = Sequences(reader.sequences, seqs_to_process, params->seq_len, params->batch_size, reader);
+    Sequences seqs = Sequences(reader.sequences, seqs_to_process,
+                               params->seq_len,  params->batch_size, reader);
     seqs.GPU_memory_init();
     do {
         seqs.GPU_launch_wavefront_distance();
@@ -96,14 +97,15 @@ int main (int argc, char** argv) {
         WF_FATAL(NOMEM_ERR_STR);
 
     // Allocate a single chunk of pinned memory
-    size_t pinned_mem_per_thread = batch_size * seq_len * 2 * sizeof(SEQ_TYPE); // Sequences buffer
+    // *2 --> 2 sequences per alignment
+    // *2 --> make sure the sequence fit in memory in the worst case (100% error)
+    size_t pinned_mem_per_thread = batch_size * seq_len * 2 * 2 * sizeof(SEQ_TYPE); // Sequences buffer
     size_t total_pinned_mem = pinned_mem_per_thread * num_threads;
     uint8_t* pinned_mem;
     cudaMallocHost(&pinned_mem, total_pinned_mem);
     CUDA_CHECK_ERR
     if (!pinned_mem)
         WF_FATAL(NOMEM_ERR_STR)
-
     
     Parameters *params_array = (Parameters*)calloc(num_threads, sizeof(Parameters));
     

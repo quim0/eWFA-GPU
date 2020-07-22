@@ -93,7 +93,8 @@ __device__ void WF_extend_kernel (const WF_element element,
                                   edit_wavefronts_t* const wavefronts,
                                   SEQ_TYPE* shared_text,
                                   SEQ_TYPE* shared_pattern,
-                                  int seq_len) {
+                                  int tlen,
+                                  int plen) {
     ewf_offset_t * const offsets = OFFSETS_PTR(wavefronts->offsets_base, wavefronts->d);
 
     int tid = threadIdx.x;
@@ -115,7 +116,7 @@ __device__ void WF_extend_kernel (const WF_element element,
         // Accumulate to register, is this really necessary or the compiler
         // would do it for us?
         int acc = 0;
-        while ((v + 4) < seq_len && (h + 4) < seq_len) {
+        while ((v + 4) < plen && (h + 4) < tlen) {
             int packed_pattern = 0;
             int packed_text = 0;
 
@@ -143,7 +144,7 @@ __device__ void WF_extend_kernel (const WF_element element,
             h += 4;
         }
 
-        while (v < seq_len && h < seq_len && pattern[v++] == text[h++])
+        while (v < plen && h < tlen && pattern[v++] == text[h++])
             acc++;
 
 end_extend:
@@ -188,29 +189,36 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts) {
 __global__ void WF_edit_distance (const WF_element* elements,
                                   edit_wavefronts_t* const alignments,
                                   const size_t max_distance,
+                                  const size_t max_seq_len,
                                   const Cigars cigars) {
     extern __shared__ uint8_t shared_mem_chunk[];
     const int tid = threadIdx.x;
     const WF_element element = elements[blockIdx.x];
     edit_wavefronts_t* wavefronts = &(alignments[blockIdx.x]);
     SEQ_TYPE* shared_text = (SEQ_TYPE*)&shared_mem_chunk[0];
-    SEQ_TYPE* shared_pattern = (SEQ_TYPE*)&shared_mem_chunk[element.len];
-    int seq_len = element.len;
+    SEQ_TYPE* shared_pattern = (SEQ_TYPE*)&shared_mem_chunk[max_seq_len];
+    int text_len = element.tlen;
+    int pattern_len = element.plen;
 
     // Put text and pattern to shared memory
-    for (int i=tid; i<element.len; i += blockDim.x) {
+    // TODO: Separated loops use better the cache?
+    for (int i=tid; i<max_seq_len; i += blockDim.x) {
         shared_text[i] = element.text[i];
+    }
+
+    for (int i=tid; i<max_seq_len; i += blockDim.x) {
         shared_pattern[i] = element.pattern[i];
     }
 
-    const int target_k = EWAVEFRONT_DIAGONAL(element.len, element.len);
+    const int target_k = EWAVEFRONT_DIAGONAL(text_len, pattern_len);
     const int target_k_abs = (target_k >= 0) ? target_k : -target_k;
-    const ewf_offset_t target_offset = EWAVEFRONT_OFFSET(element.len, element.len);
+    const ewf_offset_t target_offset = EWAVEFRONT_OFFSET(text_len, pattern_len);
     int distance;
 
     for (distance = 0; distance < max_distance; distance++) {
         wavefronts->d = distance;
-        WF_extend_kernel(element, wavefronts, shared_text, shared_pattern, seq_len);
+        WF_extend_kernel(element, wavefronts, shared_text, shared_pattern,
+                         text_len, pattern_len);
         ewf_offset_t* curr_offsets = OFFSETS_PTR(wavefronts->offsets_base, wavefronts->d);
         if (target_k_abs <= distance && curr_offsets[target_k] == target_offset)
             break;
@@ -225,14 +233,14 @@ __global__ void WF_edit_distance (const WF_element* elements,
             // TODO
             printf("Max distance reached!!!\n");
         }
-        char tmp = element.text[element.len];
-        element.text[element.len] = '\0';
+        char tmp = element.text[text_len];
+        element.text[text_len] = '\0';
         printf("TEXT: %s\n", element.text);
-        element.text[element.len] = tmp;
-        tmp = element.pattern[element.len];
-        element.pattern[element.len] = '\0';
+        element.text[text_len] = tmp;
+        tmp = element.pattern[pattern_len];
+        element.pattern[pattern_len] = '\0';
         printf("PATTERN: %s\n", element.pattern);
-        element.pattern[element.len] = tmp;
+        element.pattern[pattern_len] = tmp;
         printf("Distance: %d\n", distance);
     }
 #endif

@@ -37,7 +37,8 @@ size_t SequenceReader::sequence_buffer_size () {
     // Sequence length
     //     +1 for the final nullbyte
     //     +1 for the initial '<' or '>' character
-    return this->seq_len + 2;
+    //     * 2 because max sequence length
+    return this->seq_len * 2 + 2;
 }
 
 bool SequenceReader::skip_n_alignments (int n) {
@@ -79,7 +80,7 @@ void SequenceReader::create_sequences_buffer () {
 }
 #endif
 
-SEQ_TYPE* SequenceReader::get_sequences_buffer () {
+SEQ_TYPE* SequenceReader::get_sequences_buffer () const {
 #if 0
     if (this->sequences_mem == NULL) {
         this->create_sequences_buffer();
@@ -106,7 +107,7 @@ bool SequenceReader::read_n_sequences (int n) {
 
     if (n > this->batch_size) {
         WF_ERROR("Number of alignments to read from file \"%s\"can not be "
-                 "bigger than the batch size (%d)", this->seq_file,
+                 "bigger than the batch size (%zu)", this->seq_file,
                  this->batch_size);
         return false;
     }
@@ -140,11 +141,12 @@ bool SequenceReader::read_n_sequences (int n) {
     // Sequence pair format in file:
     // >TEXTGGG
     // <PATTERN
-    while (sequence_idx < n && getline(&buf, &buf_size, this->fp) > 0) {
+    ssize_t length;
+    while (sequence_idx < n && (length = getline(&buf, &buf_size, this->fp)) > 0) {
         WF_element *curr_elem = &(this->sequences[sequence_idx]);
         // Pointer where the current sequence will be allocated in the big
         // memory chunck
-        SEQ_TYPE* curr_seq_ptr = seq_alloc + idx * this->seq_len;
+        SEQ_TYPE* curr_seq_ptr = this->get_sequences_buffer() + idx * this->max_seq_len;
 
         if (elem_idx == 0) {
             // First element of the sequence (TEXT)
@@ -156,8 +158,9 @@ bool SequenceReader::read_n_sequences (int n) {
                 break;
             }
             // +1 to avoid the '>' character
-            memcpy(curr_seq_ptr, buf + 1, this->seq_len * sizeof(SEQ_TYPE));
+            memcpy(curr_seq_ptr, buf + 1, length - 2);
             curr_elem->text = curr_seq_ptr;
+            curr_elem->tlen = length - 2; // -1 for the initial >, -1 for \n
         } else if (elem_idx == 1) {
             // Second element of the sequence (PATTERN)
             if (buf[0] != '<') {
@@ -168,10 +171,10 @@ bool SequenceReader::read_n_sequences (int n) {
                 break;
             }
             // +1 to avoid the '<' character
-            memcpy(curr_seq_ptr, buf + 1, this->seq_len * sizeof(SEQ_TYPE));
+            memcpy(curr_seq_ptr, buf + 1, length - 2);
             curr_elem->pattern= curr_seq_ptr;
+            curr_elem->plen = length - 2; // -1 for <, -1 for \n
         }
-        curr_elem->len = this->seq_len;
 
         idx++;
         // Current sequence pair
