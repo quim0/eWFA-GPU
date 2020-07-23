@@ -24,13 +24,13 @@
 void SequenceReader::initialize_sequences () {
     // Allocate memory for the array that will contain all the elements to
     // process.
-    DEBUG("Trying to allocate memory to store all the sequences. (%zu bytes)",
-          this->batch_size * sizeof(WF_element)
-          );
-    this->sequences = (WF_element*)calloc(this->batch_size, sizeof(WF_element));
+    DEBUG("Trying to allocate memory to store %zu sequences structs. (%zu KiB)",
+          this->num_alignments,
+          (this->num_alignments * sizeof(WF_element) / (1 << 20)));
+    this->sequences = (WF_element*)calloc(this->num_alignments, sizeof(WF_element));
     if (this->sequences == NULL)
         WF_FATAL(NOMEM_ERR_STR);
-    DEBUG("Sequences memory allocated (%p)", this->sequences);
+    DEBUG("Sequences structs memory allocated (%p)", this->sequences);
 }
 
 size_t SequenceReader::sequence_buffer_size () {
@@ -68,27 +68,28 @@ bool SequenceReader::skip_n_alignments (int n) {
     return true;
 }
 
-#if 0
+// Allocate space for the sequences of the whole file
 void SequenceReader::create_sequences_buffer () {
-    int bytes_to_alloc = this->batch_size * this->seq_len * 2 * sizeof(SEQ_TYPE);
-    DEBUG("Trying to allocate %d pinned memory MiB to store the sequences.",
-          bytes_to_alloc / (1 << 20));
-    cudaMallocHost((void**)&this->sequences_mem, bytes_to_alloc);
+    // As now we read the whole file, if it's large it'll be difficult to find a
+    // phisycal contiguous memory space of e.g 20GiB (for 5M alignments of 1K
+    // sequence length)
+    // TODO: Allocate exactly the size of the file to save memory
+    size_t bytes_to_alloc = this->num_alignments * this->max_seq_len * 2 * sizeof(SEQ_TYPE);
+    DEBUG("Trying to allocate %zu GiB to store the sequences.",
+          bytes_to_alloc / (1 << 30));
+    //cudaMallocHost((void**)&this->sequences_mem, bytes_to_alloc);
+    this->sequences_mem = (SEQ_TYPE*)calloc(bytes_to_alloc, 1);
     if (!this->sequences_mem)
         WF_FATAL(NOMEM_ERR_STR);
-    DEBUG("Allocated %d pinned memory MiB to store the sequences.",
-          bytes_to_alloc / (1 << 20));
+    DEBUG("Allocated %zu GiB to store the sequences.",
+          bytes_to_alloc / (1 << 30));
 }
-#endif
 
-SEQ_TYPE* SequenceReader::get_sequences_buffer () const {
-#if 0
+SEQ_TYPE* SequenceReader::get_sequences_buffer () {
     if (this->sequences_mem == NULL) {
         this->create_sequences_buffer();
     }
-#endif
     return this->sequences_mem;
-    
 }
 
 SEQ_TYPE* SequenceReader::create_sequence_buffer () {
@@ -100,16 +101,16 @@ SEQ_TYPE* SequenceReader::create_sequence_buffer () {
     return buf;
 }
 
-bool SequenceReader::read_n_sequences (int n) {
+bool SequenceReader::read_n_alignments (int n) {
     if (this->seq_len == 0) {
         DEBUG("Sequence length specified is 0, nothing to do.");
         return true;
     }
 
-    if (n > this->batch_size) {
+    if (n > this->num_alignments) {
         WF_ERROR("Number of alignments to read from file \"%s\"can not be "
-                 "bigger than the batch size (%zu)", this->seq_file,
-                 this->batch_size);
+                 "bigger than the total number of alignments (%zu)", this->seq_file,
+                 this->num_alignments);
         return false;
     }
 
@@ -130,7 +131,7 @@ bool SequenceReader::read_n_sequences (int n) {
 
     // Big chunk of memory where all the sequences will be stored
     // The final nullbyte WILL NOT be stored as we already know the string size
-    // num_sequences is the number of sequences pairs (pattern/text), so it's
+    // num_alignments is the number of sequences pairs (pattern/text), so it's
     // nedded to double the space required.
     SEQ_TYPE* seq_alloc = this->get_sequences_buffer();
 

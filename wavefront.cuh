@@ -165,6 +165,8 @@ public:
     size_t batch_size;
     // Current batch index
     int batch_idx;
+    // Where to start to read the alignments
+    int initial_alignment;
 
     // Pointer of wavefronts on device
     edit_wavefronts_t* d_wavefronts;
@@ -176,25 +178,24 @@ public:
     Cigars d_cigars;
     Cigars h_cigars;
 
-    cudaStream_t HtD_stream;
-
     Sequences (WF_element* e, size_t num_e, size_t seq_len, size_t batch_size,
-               SequenceReader reader) : \
-                                                elements(e),               \
-                                                num_elements(num_e),       \
-    // TODO: Assume error of max 20%, arbitrary chose
-                                                max_distance(seq_len / 5), \
-                                                batch_size(batch_size),    \
-                                                sequences_reader(reader),  \
-                                                batch_idx(0),              \
-                                                d_cigars(
-                                                    Cigars(batch_size,
-                                                           seq_len * 2,
-                                                           true)),         \
-                                                h_cigars(
-                                                    Cigars(batch_size,
-                                                           seq_len * 2,
-                                                           false)) {
+               SequenceReader reader, int initial_alignment) :         \
+                                            elements(e),               \
+                                            num_elements(num_e),       \
+// TODO: Assume error of max 20%, arbitrary chose
+                                            max_distance(seq_len / 5), \
+                                            batch_size(batch_size),    \
+                                            sequences_reader(reader),  \
+                                            initial_alignment(initial_alignment), \
+                                            batch_idx(0),              \
+                                            d_cigars(
+                                                Cigars(batch_size,
+                                                       seq_len * 2,
+                                                       true)),         \
+                                            h_cigars(
+                                                Cigars(batch_size,
+                                                       seq_len * 2,
+                                                       false)) {
         // Initialize CPU memory
         this->offsets_host_ptr = (ewf_offset_t*)calloc(
                             OFFSETS_TOTAL_ELEMENTS(this->max_distance) * this->batch_size,
@@ -211,10 +212,6 @@ public:
             fprintf(stderr, "Out of memory on CPU. (%s:%d)", __FILE__, __LINE__);
             exit(1);
         }
-
-        // TODO: Destroy stream
-        cudaStreamCreate(&this->HtD_stream);
-        CUDA_CHECK_ERR
     }
     bool GPU_memory_init ();
     bool GPU_memory_free ();

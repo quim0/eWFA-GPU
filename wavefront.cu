@@ -56,12 +56,15 @@ bool Sequences::GPU_memory_init () {
 
     // Copy all the secuences for this batch to the fresh allocated memory on
     // GPU
-    cudaMemcpy(base_ptr, this->sequences_reader.get_sequences_buffer(),
+    SEQ_TYPE* initial_seq_ptr = this->sequences_reader.get_sequences_buffer() +
+                                (this->sequences_reader.max_seq_len * 2 *
+                                this->initial_alignment);
+    cudaMemcpy(base_ptr, initial_seq_ptr,
                (seq_size_bytes * 2) * this->batch_size,
                cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR;
 
-    cudaMemcpy(this->d_elements, this->elements,
+    cudaMemcpy(this->d_elements, &this->elements[this->initial_alignment],
                this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR;
 
@@ -170,14 +173,16 @@ bool Sequences::GPU_memory_free () {
     return true;
 }
 
+#if 0
 bool Sequences::CPU_read_next_sequences () {
     DEBUG("Reading next batch elements from the sequences file.");
     return this->sequences_reader.read_batch_sequences();
 }
+#endif
 
 bool Sequences::GPU_prepare_memory_next_batch () {
     // first "alginment" (sequence pair) of the current batch
-    int curr_position = ++this->batch_idx * this->batch_size;
+    int curr_position = (++this->batch_idx * this->batch_size);
     if (curr_position >= this->num_elements) {
         DEBUG("All batches have already been processed.");
         return false;
@@ -190,25 +195,27 @@ bool Sequences::GPU_prepare_memory_next_batch () {
 
     // Send the new text/pattern sequences to device
     size_t seq_size_bytes = this->sequences_reader.max_seq_len * sizeof(SEQ_TYPE);
-    cudaMemcpyAsync(this->sequences_device_ptr,
-               this->sequences_reader.get_sequences_buffer(),
+    SEQ_TYPE* first_pos_ptr = TEXT_PTR(this->elements[curr_position + this->initial_alignment].alignment_idx,
+                                   this->sequences_reader.get_sequences_buffer(),
+                                   this->sequences_reader.max_seq_len);
+    cudaMemcpy(this->sequences_device_ptr,
+               first_pos_ptr,
                (seq_size_bytes * 2) * curr_batch_size,
-               cudaMemcpyHostToDevice, this->HtD_stream);
+               cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR
 
-    cudaMemcpyAsync(this->d_elements, this->elements,
-               this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice,
-               this->HtD_stream);
+    // Send the new text_len and pattern_len to device
+    cudaMemcpy(this->d_elements, &this->elements[curr_position + initial_alignment],
+               this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice);
     CUDA_CHECK_ERR;
 
     size_t offsets_size_bytes = OFFSETS_TOTAL_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
     size_t total_offsets_size = offsets_size_bytes * this->batch_size;
-    cudaMemsetAsync(this->offsets_device_ptr, 0, total_offsets_size, this->HtD_stream);
+    cudaMemset(this->offsets_device_ptr, 0, total_offsets_size);
     CUDA_CHECK_ERR
 
     return true;
 }
-
 
 void Sequences::GPU_launch_wavefront_distance () {
     // TODO: Determine better the number of threads
@@ -216,7 +223,8 @@ void Sequences::GPU_launch_wavefront_distance () {
 
     int blocks_x;
     // Check if the current batch is smaller than "batch_size"
-    size_t sequences_remaining = this->num_elements - this->batch_size * this->batch_idx;
+    size_t sequences_remaining = this->num_elements - this->batch_size *
+                                 this->batch_idx;
     if (sequences_remaining < this->batch_size)
         blocks_x = sequences_remaining;
     else
@@ -232,36 +240,27 @@ void Sequences::GPU_launch_wavefront_distance () {
     // text + pattern with allowance of 100% error
     int shared_mem = this->sequences_reader.max_seq_len * 2;
 
-    // Make sure that text and patterns are copied
-    cudaStreamSynchronize(this->HtD_stream);
-    CUDA_CHECK_ERR;
-
     WF_edit_distance<<<numBlocks, blockDim, shared_mem>>>(this->d_elements,
                                               this->d_wavefronts,
                                               this->sequences_device_ptr,
                                               this->max_distance,
                                               this->sequences_reader.max_seq_len,
                                               this->d_cigars);
-#ifndef DEBUG_MODE
-    // When debugging, the original sequences need to be preserved to be able to
-    // check the CIGARs, so it need to wait until the kernel finishes the
-    // execution
-    this->CPU_read_next_sequences();
-#endif
 #ifdef DEBUG_MODE
     this->h_cigars.copyIn(this->d_cigars);
+    size_t curr_position = (this->batch_idx * this->batch_size) +
+                        this->initial_alignment;
     SEQ_TYPE* seq_base_ptr = this->sequences_reader.get_sequences_buffer();
     size_t max_seq_len = this->sequences_reader.max_seq_len;
     int total_corrects = 0;
     for (int i=0; i<blocks_x; i++)
-        if (this->h_cigars.check_cigar(i, this->elements[i], seq_base_ptr, max_seq_len))
+        if (this->h_cigars.check_cigar(i, this->elements[curr_position + i], seq_base_ptr, max_seq_len))
             total_corrects++;
 
     if (total_corrects == blocks_x)
         DEBUG_GREEN("Correct alignments: %d/%d", total_corrects, blocks_x)
     else
         DEBUG_RED("Correct alignments: %d/%d", total_corrects, blocks_x)
-    this->CPU_read_next_sequences();
 #endif
 }
 
@@ -269,6 +268,7 @@ void Sequences::GPU_launch_wavefront_distance () {
 bool Sequences::prepare_next_batch () {
     // Wait for the kernel to finish
     cudaStreamSynchronize(0);
+    CUDA_CHECK_ERR;
     bool ret;
     // This is async
     ret = this->GPU_prepare_memory_next_batch();

@@ -37,7 +37,7 @@ public:
     // Maximum sequence length if error rate is 100%
     size_t max_seq_len;
     // Number of sequences pairs in the "sequences" list and in the file
-    size_t num_sequences;
+    size_t num_alignments;
 
     FILE *fp;
     // Chunk of memory where all the sequences will be stored, the final
@@ -51,36 +51,40 @@ public:
     // Array that will be filled with the sequences from the file
     WF_element* sequences;
 
-    SequenceReader (char* seq_file, size_t seq_len, size_t num_sequences,
-                                    size_t batch_size, SEQ_TYPE* seq_mem) : \
+    SequenceReader (char* seq_file, size_t seq_len, size_t num_alignments,
+                                    size_t batch_size) : \
                                               seq_file(seq_file),           \
                                               seq_len(seq_len),             \
                                               max_seq_len(seq_len * 2),     \
-                                              num_sequences(num_sequences), \
+                                              num_alignments(num_alignments), \
                                               batch_size(batch_size),       \
                                               sequences(NULL),              \
-                                              sequences_mem(seq_mem),       \
+                                              sequences_mem(NULL),       \
                                               fp(NULL),                     \
                                               num_sequences_read(0) {
         DEBUG("SequenceReader created:\n"
               "    File: %s\n"
               "    Sequence avg length: %zu\n"
-              "    Number of sequences: %zu", seq_file, seq_len, num_sequences);
+              "    Number of sequences: %zu", seq_file, seq_len, num_alignments);
     }
 
     bool skip_n_alignments (int n);
-    bool read_n_sequences (int n);
-    bool read_batch_sequences () {
+    bool read_n_alignments (int n);
+    bool read_batch_alignments () {
         memset(this->get_sequences_buffer(), 0, this->max_seq_len * 2 * this->batch_size);
-        return read_n_sequences(this->batch_size);
+        return read_n_alignments(this->batch_size);
     }
-    SEQ_TYPE* get_sequences_buffer () const;
+    bool read_file () {
+        return read_n_alignments(this->num_alignments);
+    }
+    SEQ_TYPE* get_sequences_buffer ();
+    size_t sequences_buffer_size () const;
     void destroy ();
 
 private:
     void initialize_sequences ();
     size_t sequence_buffer_size ();
-    //void create_sequences_buffer ();
+    void create_sequences_buffer ();
     SEQ_TYPE* create_sequence_buffer ();
 };
 

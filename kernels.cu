@@ -187,7 +187,7 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts) {
 }
 
 __global__ void WF_edit_distance (const WF_element* elements,
-                                  edit_wavefronts_t* const alignments,
+                                  edit_wavefronts_t* const wavefronts_list,
                                   SEQ_TYPE* sequences_base_ptr,
                                   const size_t max_distance,
                                   const size_t max_seq_len,
@@ -195,13 +195,13 @@ __global__ void WF_edit_distance (const WF_element* elements,
     extern __shared__ uint8_t shared_mem_chunk[];
     const int tid = threadIdx.x;
     const WF_element element = elements[blockIdx.x];
-    edit_wavefronts_t* wavefronts = &(alignments[blockIdx.x]);
+    edit_wavefronts_t* wavefronts = &(wavefronts_list[blockIdx.x]);
     SEQ_TYPE* shared_text = (SEQ_TYPE*)&shared_mem_chunk[0];
     SEQ_TYPE* shared_pattern = (SEQ_TYPE*)&shared_mem_chunk[max_seq_len];
     int text_len = element.tlen;
     int pattern_len = element.plen;
-    SEQ_TYPE* text = TEXT_PTR(element.alignment_idx, sequences_base_ptr, max_seq_len);
-    SEQ_TYPE* pattern = PATTERN_PTR(element.alignment_idx, sequences_base_ptr, max_seq_len);
+    SEQ_TYPE* text = TEXT_PTR(blockIdx.x, sequences_base_ptr, max_seq_len);
+    SEQ_TYPE* pattern = PATTERN_PTR(blockIdx.x, sequences_base_ptr, max_seq_len);
 
     // Put text and pattern to shared memory
     // TODO: Separated loops use better the cache?
