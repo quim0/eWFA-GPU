@@ -231,14 +231,15 @@ void Sequences::GPU_launch_wavefront_distance () {
         blocks_x = this->batch_size;
     blocks_x = (blocks_x > MAX_BLOCKS) ?  MAX_BLOCKS : blocks_x;
 
-    DEBUG("Launching wavefront alignment on GPU. %d elements with %d blocks "
-          "of %d threads", blocks_x, blocks_x, threads_x);
-
     dim3 numBlocks(blocks_x, 1);
     dim3 blockDim(threads_x, 1);
 
     // text + pattern with allowance of 100% error
     int shared_mem = this->sequences_reader.max_seq_len * 2;
+
+    DEBUG("Launching wavefront alignment on GPU. %d elements with %d blocks "
+          "of %d threads, and %d KiB of shared memory", blocks_x, blocks_x,
+          threads_x, shared_mem / (1 << 10));
 
     WF_edit_distance<<<numBlocks, blockDim, shared_mem>>>(this->d_elements,
                                               this->d_wavefronts,

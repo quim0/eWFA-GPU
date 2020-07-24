@@ -113,35 +113,48 @@ __device__ void WF_extend_kernel (const WF_element element,
         int v  = EWAVEFRONT_V(k, offsets[k]);
         int h  = EWAVEFRONT_H(k, offsets[k]);
 
-        // Accumulate to register, is this really necessary or the compiler
-        // would do it for us?
         int acc = 0;
         while ((v + 4) < plen && (h + 4) < tlen) {
-            int packed_pattern = 0;
-            int packed_text = 0;
+            const SEQ_TYPE* curr_pattern_ptr = &pattern[v];
+            const SEQ_TYPE* curr_text_ptr = &text[h];
 
-            uint32_t p1 = pattern[v] << 24;
-            uint32_t p2 = pattern[v + 1] << 16;
-            uint32_t p3 = pattern[v + 2] << 8;
-            uint32_t p4 = pattern[v + 3];
+            // 0xffffff00
+            uintptr_t alignment_mask = (uintptr_t)-1 << 2;
+            // Align addresses to 4 bytes
+            SEQ_TYPE* curr_pattern_ptr_aligned =
+                                (SEQ_TYPE*)((uintptr_t)curr_pattern_ptr & alignment_mask);
+            SEQ_TYPE* curr_text_ptr_aligned =
+                                (SEQ_TYPE*)((uintptr_t)curr_text_ptr & alignment_mask);
 
-            packed_pattern = p1 | p2 | p3 | p4;
+            // 0x3 --> 0b11
+            unsigned int pattern_bytes_to_remove = (uintptr_t)curr_pattern_ptr & 0x3;
+            unsigned int text_bytes_to_remove = (uintptr_t)curr_text_ptr & 0x3;
+            unsigned int bytes_to_remove = max(pattern_bytes_to_remove,
+                                               text_bytes_to_remove);
 
-            uint32_t t1 = text[h] << 24;
-            uint32_t t2 = text[h + 1] << 16;
-            uint32_t t3 = text[h + 2] << 8;
-            uint32_t t4 = text[h + 3];
+            uint32_t packed_pattern = *(uint32_t*)curr_pattern_ptr_aligned;
+            uint32_t packed_text = *(uint32_t*)curr_text_ptr_aligned;
 
-            packed_text = t1 | t2 | t3 | t4;
+            // Rightshift because the data is little-endian encoded
+            packed_pattern = packed_pattern >> (pattern_bytes_to_remove * 8);
+            packed_text = packed_text >> (text_bytes_to_remove * 8);
 
-            int lz = __clz(packed_pattern ^ packed_text);
-            acc += lz / 8;
-            if (lz < 32) {
+            uint32_t xored_val = packed_pattern ^ packed_text;
+            uint32_t b0 = (xored_val & 0xff) << 24;
+            uint32_t b1 = (xored_val & 0xff00) << 8;
+            uint32_t b2 = (xored_val & 0xff0000) >> 8;
+            uint32_t b3 = (xored_val & 0xff000000) >> 24;
+            xored_val  = b0 | b1 | b2 | b3;
+
+            int lz = __clz(xored_val);
+            int useful_bytes = 4 - bytes_to_remove;
+            acc += min(lz / 8, useful_bytes);
+            if (lz < (useful_bytes * 8)) {
                 goto end_extend;
             }
 
-            v += 4;
-            h += 4;
+            v += useful_bytes;
+            h += useful_bytes;
         }
 
         while (v < plen && h < tlen && pattern[v++] == text[h++])
@@ -232,7 +245,7 @@ __global__ void WF_edit_distance (const WF_element* elements,
 
 #ifdef DEBUG_MODE
     if (blockIdx.x == 0 && tid == 0) {
-        if (distance == (max_distance - 1)) {
+        if (distance == max_distance) {
             // TODO
             printf("Max distance reached!!!\n");
         }
