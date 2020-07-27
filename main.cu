@@ -98,6 +98,9 @@ int main (int argc, char** argv) {
     if (!reader.read_file()) {
         WF_FATAL("Could not read the sequences from file %s\n", seq_file);
     }
+
+    CLOCK_INIT_NO_DEBUG()
+    CLOCK_START_NO_DEBUG()
     
     for (unsigned int i=1; i<num_threads; i++) {
         Parameters *params = &params_array[i];
@@ -128,6 +131,8 @@ int main (int argc, char** argv) {
         if (pthread_join(threads[i], NULL))
             WF_FATAL("Can not join thread.");
     }
+
+    CLOCK_STOP_NO_DEBUG("Aligned executed.")
 
     free(params_array);
     free(threads);
