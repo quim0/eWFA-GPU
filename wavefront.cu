@@ -198,20 +198,22 @@ bool Sequences::GPU_prepare_memory_next_batch () {
     SEQ_TYPE* first_pos_ptr = TEXT_PTR(this->elements[curr_position + this->initial_alignment].alignment_idx,
                                    this->sequences_reader.get_sequences_buffer(),
                                    this->sequences_reader.max_seq_len);
-    cudaMemcpy(this->sequences_device_ptr,
+    cudaMemcpyAsync(this->sequences_device_ptr,
                first_pos_ptr,
                (seq_size_bytes * 2) * curr_batch_size,
-               cudaMemcpyHostToDevice);
+               cudaMemcpyHostToDevice,
+               this->HtD_stream);
     CUDA_CHECK_ERR
 
     // Send the new text_len and pattern_len to device
-    cudaMemcpy(this->d_elements, &this->elements[curr_position + initial_alignment],
-               this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(this->d_elements, &this->elements[curr_position + initial_alignment],
+               this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice,
+               this->HtD_stream);
     CUDA_CHECK_ERR;
 
     size_t offsets_size_bytes = OFFSETS_TOTAL_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
     size_t total_offsets_size = offsets_size_bytes * this->batch_size;
-    cudaMemset(this->offsets_device_ptr, 0, total_offsets_size);
+    cudaMemsetAsync(this->offsets_device_ptr, 0, total_offsets_size, this->HtD_stream);
     CUDA_CHECK_ERR
 
     return true;
@@ -236,6 +238,10 @@ void Sequences::GPU_launch_wavefront_distance () {
 
     // text + pattern with allowance of 100% error
     int shared_mem = this->sequences_reader.max_seq_len * 2;
+
+    // Wait until the sequences are copied to the device
+    cudaStreamSynchronize(this->HtD_stream);
+    CUDA_CHECK_ERR
 
     DEBUG("Launching wavefront alignment on GPU. %d elements with %d blocks "
           "of %d threads, and %d KiB of shared memory", blocks_x, blocks_x,

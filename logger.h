@@ -49,13 +49,14 @@
 #define CLOCK_INIT()
 #define CLOCK_START()
 #define CLOCK_STOP(text)
+#endif
+
 #define CLOCK_INIT_NO_DEBUG() struct timespec now, tmstart; double seconds;
 #define CLOCK_START_NO_DEBUG() clock_gettime(CLOCK_REALTIME, &tmstart);
 #define CLOCK_STOP_NO_DEBUG(text) \
     clock_gettime(CLOCK_REALTIME, &now); \
     seconds = (double)((now.tv_sec+now.tv_nsec*1e-9) - (double)(tmstart.tv_sec+tmstart.tv_nsec*1e-9)); \
     printf("%s Wall time %fs\n", text, seconds);
-#endif
 
 #define NOMEM_ERR_STR "Could not allocate memory.\n"
 

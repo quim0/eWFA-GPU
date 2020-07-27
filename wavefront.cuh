@@ -178,6 +178,8 @@ public:
     Cigars d_cigars;
     Cigars h_cigars;
 
+    cudaStream_t HtD_stream;
+
     Sequences (WF_element* e, size_t num_e, size_t seq_len, size_t batch_size,
                SequenceReader reader, int initial_alignment) :         \
                                             elements(e),               \
@@ -212,6 +214,10 @@ public:
             fprintf(stderr, "Out of memory on CPU. (%s:%d)", __FILE__, __LINE__);
             exit(1);
         }
+
+        // TODO: Destroy stream
+        cudaStreamCreate(&this->HtD_stream);
+        CUDA_CHECK_ERR
     }
     bool GPU_memory_init ();
     bool GPU_memory_free ();
