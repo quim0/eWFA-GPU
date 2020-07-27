@@ -187,7 +187,8 @@ bool Sequences::GPU_prepare_memory_next_batch () {
         DEBUG("All batches have already been processed.");
         return false;
     }
-    DEBUG("Rearranging memory for batch iteration %d (position %d)", this->batch_idx, curr_position);
+    DEBUG("Rearranging memory for batch iteration %d (position %d)",
+           this->batch_idx, initial_alignment + curr_position);
     // The last "batch" may be sorter than a complete batch, e.g 10 elements,
     // batch size of 3
     int curr_batch_size = ((this->num_elements - curr_position) < this->batch_size) ?
@@ -207,7 +208,7 @@ bool Sequences::GPU_prepare_memory_next_batch () {
 
     // Send the new text_len and pattern_len to device
     cudaMemcpyAsync(this->d_elements, &this->elements[curr_position + initial_alignment],
-               this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice,
+               curr_batch_size * sizeof(WF_element), cudaMemcpyHostToDevice,
                this->HtD_stream);
     CUDA_CHECK_ERR;
 
