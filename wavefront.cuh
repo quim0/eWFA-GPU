@@ -168,11 +168,6 @@ public:
     // Where to start to read the alignments
     int initial_alignment;
 
-    // Pointer of wavefronts on device
-    edit_wavefronts_t* d_wavefronts;
-    // Array of wavefronts on host for backtrace calculation
-    edit_wavefronts_t* wavefronts;
-
     SequenceReader sequences_reader;
 
     Cigars d_cigars;
@@ -198,26 +193,14 @@ public:
                                                 Cigars(batch_size,
                                                        seq_len * 2,
                                                        false)) {
-        // Initialize CPU memory
-        this->offsets_host_ptr = (ewf_offset_t*)calloc(
-                            OFFSETS_TOTAL_ELEMENTS(this->max_distance) * this->batch_size,
-                            sizeof(ewf_offset_t));
-        if (!this->offsets_host_ptr) {
-            // TODO: Reorganize code so we can include WF_FATAL here
-            fprintf(stderr, "Out of memory on CPU. (%s:%d)", __FILE__, __LINE__);
-            exit(1);
-        }
-
-        this->wavefronts = (edit_wavefronts_t*)calloc(this->batch_size,
-                                                      sizeof(edit_wavefronts_t));
-        if (!this->wavefronts) {
-            fprintf(stderr, "Out of memory on CPU. (%s:%d)", __FILE__, __LINE__);
-            exit(1);
-        }
-
         // TODO: Destroy stream
         cudaStreamCreate(&this->HtD_stream);
         CUDA_CHECK_ERR
+
+        this->backtraces_host_ptr = (WF_backtrace_t*)calloc(this->batch_size,
+                                                        sizeof(WF_backtrace_t));
+        if (!this->backtraces_host_ptr)
+            WF_FATAL(NOMEM_ERR_STR);
     }
     bool GPU_memory_init ();
     bool GPU_memory_free ();
@@ -229,8 +212,9 @@ private:
     bool CPU_read_next_sequences ();
     bool GPU_prepare_memory_next_batch ();
     SEQ_TYPE* sequences_device_ptr;
-    ewf_offset_t* offsets_device_ptr;
-    ewf_offset_t* offsets_host_ptr;
+    WF_backtrace_t* backtraces_device_ptr;
+    WF_backtrace_t* result_backtraces_device_ptr;
+    WF_backtrace_t* backtraces_host_ptr;
 };
 
 #endif // Header guard WAVEFRONT_H

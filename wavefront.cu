@@ -75,75 +75,18 @@ bool Sequences::GPU_memory_init () {
     CLOCK_STOP("GPU pattern/text memory initializaion.")
 #endif
 
-    // Start the clock for benchmark in DEBUG_MODE
-    CLOCK_START()
-
-    // Create offsets into the GPU
-    req_memory = this->batch_size * sizeof(edit_wavefronts_t);
-    if (req_memory > MAX_GPU_SIZE) {
-        WF_ERROR("Required memory is bigger than available memory in GPU");
-        return false;
-    }
-    // Allocate memory for the edit_wavefronts_t structure in GPU
-    cudaMalloc((void **) &(this->d_wavefronts), req_memory);
+    // One WF_backtrace_t (128 bit) struct per each K, per each alignment
+    size_t bt_size_bytes = this->batch_size * WF_ELEMENTS(max_distance) * sizeof(WF_backtrace_t);
+    DEBUG("Allocating space for partial backtraces (%zu KiB)", bt_size_bytes / (1 << 20));
+    cudaMalloc((void**) &this->backtraces_device_ptr, bt_size_bytes);
+    CUDA_CHECK_ERR;
+    cudaMemset(this->backtraces_device_ptr, 0, bt_size_bytes);
     CUDA_CHECK_ERR;
 
-    // Allocate one big memory chunk in the device for all the offsets
-    size_t offsets_size_bytes = OFFSETS_TOTAL_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
-    size_t total_offsets_size = offsets_size_bytes * this->batch_size;
-#ifdef DEBUG_MODE
-    if (total_offsets_size >= (1 << 30)) {
-        DEBUG("Trying to initialize %.2f MiB per offset (total %.2f GiB).",
-              (double)offsets_size_bytes / (1 << 20), (double)total_offsets_size / (1 << 30));
-    }
-    else if (offsets_size_bytes >= (1 << 20)) {
-        DEBUG("Trying to initialize %.2f MiB per offset (total %.2f MiB).",
-              (double)offsets_size_bytes / (1 << 20), (double)total_offsets_size / (1 << 20));
-    }
-    else {
-        if (total_offsets_size >= (1 << 20)) {
-            DEBUG("Trying to initialize %.2f KiB per offset (total %.2f MiB).",
-                  (double)offsets_size_bytes / (1 << 10), (double)total_offsets_size / (1 << 20));
-        }
-        else {
-            DEBUG("Trying to initialize %.2f KiB per offset (total %.2f KiB).",
-                  (double)offsets_size_bytes / (1 << 10), (double)total_offsets_size / (1 << 10));
-        }
-    }
-#endif
-    // 2 offsets per element (wavefront and next_wavefront)
-    cudaMalloc((void **) &base_ptr, total_offsets_size);
+    size_t res_bt_size_bytes = this->batch_size * sizeof(WF_backtrace_t);
+    DEBUG("Allocating space for result backtraces (%zu KiB)", res_bt_size_bytes / (1 << 20));
+    cudaMalloc((void**) &this->result_backtraces_device_ptr, bt_size_bytes);
     CUDA_CHECK_ERR;
-    this->offsets_device_ptr = (ewf_offset_t*)base_ptr;
-    cudaMemset((void *) base_ptr, 0, total_offsets_size);
-    CUDA_CHECK_ERR;
-
-
-    // A temporary CPU edit_wavefronts_t array is needed. As we can not access
-    // pointers inside GPU, the device pointers results are saved on host RAM,
-    // and then send the data to device just once.
-    edit_wavefronts_t *tmp_host_wavefronts;
-    tmp_host_wavefronts = (edit_wavefronts_t*)calloc(this->batch_size,
-                                                     sizeof(edit_wavefronts_t));
-
-    for (int i=0; i<this->batch_size; i++) {
-        ewf_offset_t *curr_offset = (ewf_offset_t*)(base_ptr + i * offsets_size_bytes);
-        edit_wavefronts_t *curr_host_wf = &tmp_host_wavefronts[i];
-        curr_host_wf->offsets_base = curr_offset;
-        curr_host_wf->d = 0;
-    }
-
-    cudaMemcpy(this->d_wavefronts, tmp_host_wavefronts,
-               req_memory, cudaMemcpyHostToDevice);
-    CUDA_CHECK_ERR;
-
-    free(tmp_host_wavefronts);
-
-#ifdef DEBUG_MODE
-    total_memory = req_memory + total_offsets_size;
-    DEBUG("GPU offsets memory initialized, %zu MiB used.", total_memory / (1 << 20));
-    CLOCK_STOP("GPU offsets memory initialization.")
-#endif
 
     return true;
 }
@@ -159,15 +102,6 @@ bool Sequences::GPU_memory_free () {
     CUDA_CHECK_ERR;
 
     CLOCK_STOP("Text/patterns GPU memory freed.")
-
-    // Free all the offsets
-    CLOCK_START()
-    cudaFree(this->offsets_device_ptr);
-    CUDA_CHECK_ERR;
-    cudaFree(this->d_wavefronts);
-    CUDA_CHECK_ERR;
-
-    CLOCK_STOP("Offsets GPU memory freed.")
 
     DEBUG("GPU memory freed.")
     return true;
@@ -212,10 +146,10 @@ bool Sequences::GPU_prepare_memory_next_batch () {
                this->HtD_stream);
     CUDA_CHECK_ERR;
 
-    size_t offsets_size_bytes = OFFSETS_TOTAL_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
-    size_t total_offsets_size = offsets_size_bytes * this->batch_size;
-    cudaMemsetAsync(this->offsets_device_ptr, 0, total_offsets_size, this->HtD_stream);
-    CUDA_CHECK_ERR
+    // Set backtraces to 0
+    size_t bt_size_bytes = this->batch_size * WF_ELEMENTS(max_distance) * sizeof(WF_backtrace_t);
+    cudaMemsetAsync(this->backtraces_device_ptr, 0, bt_size_bytes, this->HtD_stream);
+    CUDA_CHECK_ERR;
 
     return true;
 }
@@ -238,7 +172,9 @@ void Sequences::GPU_launch_wavefront_distance () {
     dim3 blockDim(threads_x, 1);
 
     // text + pattern with allowance of 100% error
-    int shared_mem = this->sequences_reader.max_seq_len * 2;
+    int shared_mem = this->sequences_reader.max_seq_len * 2
+                     // 2 complete wavefronts
+                     + 2 * WF_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
 
     // Wait until the sequences are copied to the device
     cudaStreamSynchronize(this->HtD_stream);
@@ -249,13 +185,17 @@ void Sequences::GPU_launch_wavefront_distance () {
           threads_x, shared_mem / (1 << 10));
 
     WF_edit_distance<<<numBlocks, blockDim, shared_mem>>>(this->d_elements,
-                                              this->d_wavefronts,
                                               this->sequences_device_ptr,
                                               this->max_distance,
                                               this->sequences_reader.max_seq_len,
-                                              this->d_cigars);
+                                              this->backtraces_device_ptr,
+                                              this->result_backtraces_device_ptr);
 #ifdef DEBUG_MODE
-    this->h_cigars.copyIn(this->d_cigars);
+    //this->h_cigars.copyIn(this->d_cigars);
+    size_t bt_offset_results = this->batch_size * WF_ELEMENTS(max_distance) * sizeof(WF_backtrace_t);
+    cudaMemcpy((void*)this->backtraces_host_ptr, this->result_backtraces_device_ptr,
+               this->batch_size * sizeof(WF_backtrace_t), cudaMemcpyDeviceToHost);
+    CUDA_CHECK_ERR;
     size_t curr_position = (this->batch_idx * this->batch_size) +
                         this->initial_alignment;
     SEQ_TYPE* seq_base_ptr = this->sequences_reader.get_sequences_buffer();
@@ -278,14 +218,19 @@ bool Sequences::prepare_next_batch () {
     cudaStreamSynchronize(0);
     CUDA_CHECK_ERR;
     bool ret;
+
+
     // This is async
     ret = this->GPU_prepare_memory_next_batch();
 
     // This is sync
-    this->h_cigars.copyIn(this->d_cigars);
+    size_t bt_offset_results = this->batch_size * WF_ELEMENTS(max_distance) * sizeof(WF_backtrace_t);
+    cudaMemcpy((void*)this->backtraces_host_ptr, this->result_backtraces_device_ptr,
+               this->batch_size * sizeof(WF_backtrace_t), cudaMemcpyDeviceToHost);
+    CUDA_CHECK_ERR;
 
     // Put all the device cigars at 0 again
-    this->d_cigars.device_reset();
+    //this->d_cigars.device_reset();
 
     return ret;
 }

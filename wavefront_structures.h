@@ -30,11 +30,12 @@ typedef int16_t ewf_offset_t;
 typedef char edit_cigar_t;
 
 #define OFFSETS_TOTAL_ELEMENTS(max_d) (max_d * max_d + (max_d * 2 + 1))
+#define WF_ELEMENTS(d) (d * 2 + 1)
 #define OFFSETS_PTR(offsets_mem, d) (offsets_mem + ((d)*(d)) + (d))
 
 struct edit_wavefronts_t {
     uint32_t d;
-    ewf_offset_t* offsets_base;
+    ewf_offset_t* offsets;
 };
 
 #define TEXT_PTR(idx, base_ptr, max_seq_len) ((SEQ_TYPE*)(base_ptr + idx * 2 * max_seq_len))
@@ -47,5 +48,27 @@ struct WF_element {
     size_t tlen;
     size_t plen;
 };
+
+// Assume 128 bit backtrace, composed of 2 64bit words
+#define WRITE_BT_OP(backtrace, d, op) \
+    int word = d / 32; \
+    int rev_pos = 31 - (d % 32); \
+    uint64_t tmp_word = (uint64_t)op << rev_pos; \
+    backtrace->words[word] |= tmp_word; \
+
+// 128 bit backtrace data, max_distance = 64
+struct WF_backtrace_t {
+    uint64_t words[2];
+};
+
+#define CURR_MAX_DISTANCE 64
+
+// Backtrace operations encoded in 2 bits
+typedef enum {
+    NOOP, // Reserved, not used
+    DEL,  // k + 1, "going up"
+    SUB,  // k
+    INS   // k - 1, "going down"
+} WF_backtrace_op_t;
 
 #endif

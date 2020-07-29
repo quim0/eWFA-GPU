@@ -22,10 +22,12 @@
 #ifndef KERNELS_CUH
 #define KERNELS_CUH
 
+#include "wavefront_structures.h"
+
 __global__ void WF_edit_distance (const WF_element* elements,
-                                  edit_wavefronts_t* const wavefronts,
                                   SEQ_TYPE* seq_base_ptr,
                                   const size_t max_distance,
                                   const size_t max_seq_len,
-                                  const Cigars cigars);
+                                  WF_backtrace_t* backtraces_base_ptr,
+                                  WF_backtrace_t* result_backtraces);
 #endif
