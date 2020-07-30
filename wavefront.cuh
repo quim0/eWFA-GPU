@@ -38,43 +38,55 @@
 
 class Cigars {
 public:
-    __host__ Cigars (int n, size_t max_d, bool device) {
-        // +1 to store a nullbyte
-        this->max_distance = max_d + 1;
+    __host__ Cigars (int n, size_t max_d, size_t cigar_max_len, bool device) {
+        this->max_distance = max_d;
         this->num_cigars = n;
+        // +1 to store a nullbyte
+        this->cigar_max_len = cigar_max_len + 1;
         if (device) {
-            cudaMalloc((void**) &(this->data), this->cigars_size_bytes());
+            DEBUG("Allocating %zu MiB to store the partial backtraces",
+                  this->cigars_size_packed() / (1 << 20));
+            cudaMalloc((void**) &(this->data), this->cigars_size_packed());
             CUDA_CHECK_ERR
-            cudaMemset(this->data, 0, this->cigars_size_bytes());
+            cudaMemset(this->data, 0, this->cigars_size_packed());
             CUDA_CHECK_ERR
         }
         else {
-            cudaMallocHost((void**)&this->data, this->cigars_size_bytes());
+            cudaMallocHost((void**)&this->data, this->cigars_size_packed());
             if (!this->data) {
+                fprintf(stderr, "Out of memory on host. (%s:%d)", __FILE__, __LINE__);
+                exit(1);
+            }
+            this->cigars_ascii = (edit_cigar_t*)calloc(this->cigars_size_bytes(), 1);
+            if (!this->cigars_ascii) {
                 fprintf(stderr, "Out of memory on host. (%s:%d)", __FILE__, __LINE__);
                 exit(1);
             }
         }
     }
 
-    __host__ __device__ edit_cigar_t* get_cigar (const int n) const {
-        return &this->data[n * this->max_distance];
+    __host__ __device__ WF_backtrace_t* get_cigar_packed (const int n) const {
+        return &this->data[n];
+    }
+
+    __host__ edit_cigar_t* get_cigar_ascii (const int n) const {
+        return &this->cigars_ascii[n * this->cigar_max_len];
     }
 
     __host__ void copyIn (const Cigars device_cigars) {
-        cudaMemcpy(this->data, device_cigars.data, this->cigars_size_bytes(), cudaMemcpyDeviceToHost);
+        cudaMemcpy(this->data, device_cigars.data, this->cigars_size_packed(), cudaMemcpyDeviceToHost);
         CUDA_CHECK_ERR;
     }
 
     __host__ void device_reset () {
-        cudaMemset(this->data, 0, this->cigars_size_bytes());
+        cudaMemset(this->data, 0, this->cigars_size_packed());
         CUDA_CHECK_ERR
     }
 
     __host__ void print_cigar (const int n) const {
         // Cigar is in reverse order
-        edit_cigar_t* curr_cigar = this->get_cigar(n);
-        size_t cigar_len = strnlen(curr_cigar, this->max_distance);
+        edit_cigar_t* curr_cigar = this->get_cigar_ascii(n);
+        size_t cigar_len = strnlen(curr_cigar, this->cigar_max_len);
         for (int i=(cigar_len - 1); i >= 0; i--) {
             printf("%c", curr_cigar[i]);
         }
@@ -84,8 +96,8 @@ public:
     __host__ bool check_cigar (const int n, const WF_element element,
                                const SEQ_TYPE* seq_base_ptr,
                                const size_t max_seq_len) const {
-        const edit_cigar_t* curr_cigar = this->get_cigar(n);
-        const size_t cigar_len = strnlen(curr_cigar, this->max_distance);
+        const edit_cigar_t* curr_cigar = this->get_cigar_ascii(n);
+        const size_t cigar_len = strnlen(curr_cigar, this->cigar_max_len);
         int text_pos = 0, pattern_pos = 0;
         SEQ_TYPE* text = TEXT_PTR(element.alignment_idx, seq_base_ptr,
                                   max_seq_len);
@@ -145,11 +157,18 @@ public:
     }
 private:
     size_t cigars_size_bytes () {
-        return this->num_cigars * this->max_distance * sizeof(edit_cigar_t);
+        return this->num_cigars * this->cigar_max_len * sizeof(edit_cigar_t);
+    }
+    size_t cigars_size_packed () {
+        // *2 to have backtraces and next_backtraces per alignment, same
+        // strategy as with offsets (having two pointers swapping)
+        return 2 * this->num_cigars * WF_ELEMENTS(this->max_distance) * sizeof(WF_backtrace_t);
     }
     size_t max_distance;
+    size_t cigar_max_len;
     int num_cigars;
-    edit_cigar_t *data;
+    WF_backtrace_t* data;
+    edit_cigar_t* cigars_ascii;
 };
 
 class Sequences {
@@ -179,28 +198,27 @@ public:
                SequenceReader reader, int initial_alignment) :         \
                                             elements(e),               \
                                             num_elements(num_e),       \
-// TODO: Assume error of max 20%, arbitrary chose
-                                            max_distance(seq_len / 5), \
+                                            // Max distance 64 because, right
+                                            // now, we have 128 bits of partial
+                                            // backtrace per diagonal
+                                            max_distance(64), \
                                             batch_size(batch_size),    \
                                             sequences_reader(reader),  \
                                             initial_alignment(initial_alignment), \
                                             batch_idx(0),              \
                                             d_cigars(
                                                 Cigars(batch_size,
+                                                       max_distance,
                                                        seq_len * 2,
                                                        true)),         \
                                             h_cigars(
                                                 Cigars(batch_size,
+                                                       max_distance,
                                                        seq_len * 2,
                                                        false)) {
         // TODO: Destroy stream
         cudaStreamCreate(&this->HtD_stream);
         CUDA_CHECK_ERR
-
-        this->backtraces_host_ptr = (WF_backtrace_t*)calloc(this->batch_size,
-                                                        sizeof(WF_backtrace_t));
-        if (!this->backtraces_host_ptr)
-            WF_FATAL(NOMEM_ERR_STR);
     }
     bool GPU_memory_init ();
     bool GPU_memory_free ();
@@ -212,9 +230,6 @@ private:
     bool CPU_read_next_sequences ();
     bool GPU_prepare_memory_next_batch ();
     SEQ_TYPE* sequences_device_ptr;
-    WF_backtrace_t* backtraces_device_ptr;
-    WF_backtrace_t* result_backtraces_device_ptr;
-    WF_backtrace_t* backtraces_host_ptr;
 };
 
 #endif // Header guard WAVEFRONT_H

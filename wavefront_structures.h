@@ -50,11 +50,11 @@ struct WF_element {
 };
 
 // Assume 128 bit backtrace, composed of 2 64bit words
-#define WRITE_BT_OP(backtrace, d, op) \
+#define WRITE_BT_OP(backtrace, prev_backtrace, d, op) \
     int word = d / 32; \
     int rev_pos = 31 - (d % 32); \
     uint64_t tmp_word = (uint64_t)op << rev_pos; \
-    backtrace->words[word] |= tmp_word; \
+    backtrace->words[word] = prev_backtrace->words[word] | tmp_word;
 
 // 128 bit backtrace data, max_distance = 64
 struct WF_backtrace_t {
@@ -63,12 +63,13 @@ struct WF_backtrace_t {
 
 #define CURR_MAX_DISTANCE 64
 
-// Backtrace operations encoded in 2 bits
+// Backtrace operations encoded in 2 bits, using more than 2 bits will break the
+// code, so don't do it.
 typedef enum {
-    NOOP, // Reserved, not used
-    DEL,  // k + 1, "going up"
-    SUB,  // k
-    INS   // k - 1, "going down"
+    OP_NOOP, // Reserved, not used
+    OP_DEL = 3,  // k + 1, "going up"
+    OP_SUB = 2,  // k
+    OP_INS = 1   // k - 1, "going down"
 } WF_backtrace_op_t;
 
 #endif

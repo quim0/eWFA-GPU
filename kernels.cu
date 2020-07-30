@@ -170,7 +170,8 @@ end_extend:
 
 __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
                                    edit_wavefronts_t* const next_wavefronts,
-                                   WF_backtrace_t* const backtraces) {
+                                   WF_backtrace_t* const backtraces,
+                                   WF_backtrace_t* const next_backtraces) {
     ewf_offset_t * const offsets = wavefronts->offsets;
     ewf_offset_t * const next_offsets = next_wavefronts->offsets;
 
@@ -187,16 +188,27 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
         next_offsets[k] = max(max_ins_sub, offsets[k + 1]);
 
         // Calculate the partial backtraces
-        ewf_offset_t del = next_offsets[k] ^ offsets[k + 1];
-        ewf_offset_t sub = next_offsets[k] ^ offsets[k];
-        ewf_offset_t ins = next_offsets[k] ^ offsets[k - 1];
+        ewf_offset_t del = offsets[k + 1];
+        ewf_offset_t sub = offsets[k];
+        ewf_offset_t ins = offsets[k - 1];
 
-        del = del * (del == 0);
-        sub = sub * (sub == 0);
-        ins = ins * (ins == 0);
+        // Set piggy-back identifier
+        ewf_offset_t del_p = (del << 2) | OP_DEL; // OP_DEL = 3
+        ewf_offset_t sub_p = (sub << 2) | OP_SUB; // OP_SUB = 2
+        ewf_offset_t ins_p = (ins << 2) | OP_INS; // OP_INS = 1
 
+        ewf_offset_t tmp_max = max(del_p, sub_p);
+        ewf_offset_t max_p = max(tmp_max, ins_p);
+
+        // Recover where the max comes from, 3 --> 0b11
+        WF_backtrace_op_t op = (WF_backtrace_op_t)(max_p & 3);
+
+        WF_backtrace_t* curr_bt = &next_backtraces[k];
+        WF_backtrace_t* prev_bt = &backtraces[k + (op - 2)];
+
+        // set in next_backtraces the correct operation
         int curr_d = wavefronts->d + 1;
-        WRITE_BT_OP(backtraces, curr_d, del | sub | ins);
+        WRITE_BT_OP(curr_bt, prev_bt, curr_d, op);
     }
 
     if (tid == 0)
@@ -208,12 +220,17 @@ __global__ void WF_edit_distance (const WF_element* elements,
                                   SEQ_TYPE* sequences_base_ptr,
                                   const size_t max_distance,
                                   const size_t max_seq_len,
-                                  WF_backtrace_t* backtraces_base_ptr,
-                                  WF_backtrace_t* result_backtraces) {
+                                  Cigars cigars) {
     extern __shared__ uint8_t shared_mem_chunk[];
     const int tid = threadIdx.x;
     const WF_element element = elements[blockIdx.x];
-    WF_backtrace_t* const backtraces = &backtraces_base_ptr[blockIdx.x];
+    // TODO: Backtraces could also fit in shared memory?
+    WF_backtrace_t* const curr_backtraces_base  =
+                cigars.get_cigar_packed(blockIdx.x * WF_ELEMENTS(max_distance) * 2);
+    // Center the backtraces
+    WF_backtrace_t* backtraces = curr_backtraces_base + max_distance;
+    WF_backtrace_t* next_backtraces = curr_backtraces_base +
+                                        WF_ELEMENTS(max_distance) + max_distance;
 
     SEQ_TYPE* const shared_text = (SEQ_TYPE*)&shared_mem_chunk[0];
     SEQ_TYPE* const shared_pattern = (SEQ_TYPE*)&shared_mem_chunk[max_seq_len];
@@ -231,19 +248,21 @@ __global__ void WF_edit_distance (const WF_element* elements,
 
     ewf_offset_t* const shared_offsets =
                     (ewf_offset_t*)(&shared_mem_chunk[max_seq_len * 2]);
+    // +2 to avoid loop peeling in the compute function
     ewf_offset_t* const shared_next_offsets = 
-                    (ewf_offset_t*)(&shared_offsets[WF_ELEMENTS(max_distance)]);
+                    (ewf_offset_t*)(&shared_offsets[WF_ELEMENTS(max_distance) + 2]);
     // Initialize the offsets to -1 to avoid loop peeling on compute
-    for (int i=tid; i<WF_ELEMENTS(max_distance); i += blockDim.x) {
+    for (int i=tid; i<WF_ELEMENTS(max_distance) + 2; i += blockDim.x) {
         shared_offsets[i] = -1;
         shared_next_offsets[i] = -1;
     }
 
-    // + max_distance to center the offsets
+    // + max_distance to center the offsets, +1 to avoid loop peeling in the
+    // compute function
     edit_wavefronts_t wavefronts_obj =
-                 {.d = 0, .offsets = shared_offsets + max_distance};
+                 {.d = 0, .offsets = shared_offsets + max_distance + 1};
     edit_wavefronts_t next_wavefronts_obj =
-                 {.d = 0, .offsets = shared_next_offsets + max_distance};
+                 {.d = 0, .offsets = shared_next_offsets + max_distance + 1};
 
     // Use pointers to be able to swap them efficiently
     edit_wavefronts_t* wavefronts = &wavefronts_obj;
@@ -264,15 +283,21 @@ __global__ void WF_edit_distance (const WF_element* elements,
         wavefronts->d = distance;
         WF_extend_kernel(element, wavefronts, shared_text, shared_pattern,
                          text_len, pattern_len);
-        if (target_k_abs <= distance && wavefronts->offsets[target_k] == target_offset)
+        if (target_k_abs <= distance && wavefronts->offsets[target_k] == target_offset) {
             break;
+        }
 
-        WF_compute_kernel(wavefronts, next_wavefronts, backtraces);
+        WF_compute_kernel(wavefronts, next_wavefronts, backtraces, next_backtraces);
 
-        // SWAP
-        edit_wavefronts_t* tmp = next_wavefronts;
+        // SWAP offsets
+        edit_wavefronts_t* offset_tmp = next_wavefronts;
         next_wavefronts = wavefronts;
-        wavefronts = tmp;
+        wavefronts = offset_tmp;
+
+        // SWAP backtraces
+        WF_backtrace_t* bt_tmp = next_backtraces;
+        next_backtraces = backtraces;
+        backtraces = bt_tmp;
     }
     //WF_backtrace(wavefronts, cigars, target_k);
 

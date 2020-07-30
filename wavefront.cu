@@ -75,19 +75,6 @@ bool Sequences::GPU_memory_init () {
     CLOCK_STOP("GPU pattern/text memory initializaion.")
 #endif
 
-    // One WF_backtrace_t (128 bit) struct per each K, per each alignment
-    size_t bt_size_bytes = this->batch_size * WF_ELEMENTS(max_distance) * sizeof(WF_backtrace_t);
-    DEBUG("Allocating space for partial backtraces (%zu KiB)", bt_size_bytes / (1 << 20));
-    cudaMalloc((void**) &this->backtraces_device_ptr, bt_size_bytes);
-    CUDA_CHECK_ERR;
-    cudaMemset(this->backtraces_device_ptr, 0, bt_size_bytes);
-    CUDA_CHECK_ERR;
-
-    size_t res_bt_size_bytes = this->batch_size * sizeof(WF_backtrace_t);
-    DEBUG("Allocating space for result backtraces (%zu KiB)", res_bt_size_bytes / (1 << 20));
-    cudaMalloc((void**) &this->result_backtraces_device_ptr, bt_size_bytes);
-    CUDA_CHECK_ERR;
-
     return true;
 }
 
@@ -146,11 +133,6 @@ bool Sequences::GPU_prepare_memory_next_batch () {
                this->HtD_stream);
     CUDA_CHECK_ERR;
 
-    // Set backtraces to 0
-    size_t bt_size_bytes = this->batch_size * WF_ELEMENTS(max_distance) * sizeof(WF_backtrace_t);
-    cudaMemsetAsync(this->backtraces_device_ptr, 0, bt_size_bytes, this->HtD_stream);
-    CUDA_CHECK_ERR;
-
     return true;
 }
 
@@ -173,8 +155,9 @@ void Sequences::GPU_launch_wavefront_distance () {
 
     // text + pattern with allowance of 100% error
     int shared_mem = this->sequences_reader.max_seq_len * 2
-                     // 2 complete wavefronts
-                     + 2 * WF_ELEMENTS(this->max_distance) * sizeof(ewf_offset_t);
+                     // 2 complete wavefronts, add 2 to the number of elements
+                     // in a wavefront to avoid loop peeling
+                     + 2 * (WF_ELEMENTS(this->max_distance) + 2) * sizeof(ewf_offset_t);
 
     // Wait until the sequences are copied to the device
     cudaStreamSynchronize(this->HtD_stream);
@@ -188,14 +171,14 @@ void Sequences::GPU_launch_wavefront_distance () {
                                               this->sequences_device_ptr,
                                               this->max_distance,
                                               this->sequences_reader.max_seq_len,
-                                              this->backtraces_device_ptr,
-                                              this->result_backtraces_device_ptr);
+                                              this->d_cigars);
 #ifdef DEBUG_MODE
-    //this->h_cigars.copyIn(this->d_cigars);
-    size_t bt_offset_results = this->batch_size * WF_ELEMENTS(max_distance) * sizeof(WF_backtrace_t);
-    cudaMemcpy((void*)this->backtraces_host_ptr, this->result_backtraces_device_ptr,
-               this->batch_size * sizeof(WF_backtrace_t), cudaMemcpyDeviceToHost);
-    CUDA_CHECK_ERR;
+    // CopyIn copies the packed backtraces in
+    this->h_cigars.copyIn(this->d_cigars);
+    //size_t bt_offset_results = this->batch_size * WF_ELEMENTS(max_distance) * sizeof(WF_backtrace_t);
+    //cudaMemcpy((void*)this->backtraces_host_ptr, this->result_backtraces_device_ptr,
+    //           this->batch_size * sizeof(WF_backtrace_t), cudaMemcpyDeviceToHost);
+    //CUDA_CHECK_ERR;
     size_t curr_position = (this->batch_idx * this->batch_size) +
                         this->initial_alignment;
     SEQ_TYPE* seq_base_ptr = this->sequences_reader.get_sequences_buffer();
@@ -224,13 +207,10 @@ bool Sequences::prepare_next_batch () {
     ret = this->GPU_prepare_memory_next_batch();
 
     // This is sync
-    size_t bt_offset_results = this->batch_size * WF_ELEMENTS(max_distance) * sizeof(WF_backtrace_t);
-    cudaMemcpy((void*)this->backtraces_host_ptr, this->result_backtraces_device_ptr,
-               this->batch_size * sizeof(WF_backtrace_t), cudaMemcpyDeviceToHost);
-    CUDA_CHECK_ERR;
+    this->h_cigars.copyIn(this->d_cigars);
 
     // Put all the device cigars at 0 again
-    //this->d_cigars.device_reset();
+    this->d_cigars.device_reset();
 
     return ret;
 }

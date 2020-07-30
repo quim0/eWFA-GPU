@@ -28,6 +28,5 @@ __global__ void WF_edit_distance (const WF_element* elements,
                                   SEQ_TYPE* seq_base_ptr,
                                   const size_t max_distance,
                                   const size_t max_seq_len,
-                                  WF_backtrace_t* backtraces_base_ptr,
-                                  WF_backtrace_t* result_backtraces);
+                                  Cigars cigars);
 #endif
