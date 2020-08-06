@@ -30,7 +30,7 @@ __host__ __device__ void pprint_wavefront(const edit_wavefronts_t* const wf) {
 
     printf("+---+\n");
     int i;
-    for (i=lo; i<=hi; i++) {
+    for (i=hi; i>=lo; i--){
         printf("|%03d|\n", offsets[i]);
         printf("+---+\n");
     }
@@ -184,8 +184,8 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
 
         // Calculate the partial backtraces
         ewf_offset_t del = offsets[k + 1];
-        ewf_offset_t sub = offsets[k];
-        ewf_offset_t ins = offsets[k - 1];
+        ewf_offset_t sub = offsets[k] + 1;
+        ewf_offset_t ins = offsets[k - 1] + 1;
 
         // Set piggy-back identifier
         ewf_offset_t del_p = (del << 2) | OP_DEL; // OP_DEL = 3
@@ -197,6 +197,9 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
 
         // Recover where the max comes from, 3 --> 0b11
         WF_backtrace_op_t op = (WF_backtrace_op_t)(max_p & 3);
+
+        //pprint_wavefront(wavefronts);
+        //printf("op: %d k: %d\n", op, k);
 
         WF_backtrace_t* curr_bt = next_backtraces + k;
         WF_backtrace_t* prev_bt = &backtraces[k + (op - 2)];
@@ -310,7 +313,7 @@ __global__ void WF_edit_distance (const WF_element* elements,
         }
     }
 
-    printf("W0: %lld W1: %lld\n", backtraces[target_k].words[0], backtraces[target_k].words[1]);
+    //printf("W0: %lld W1: %lld\n", backtraces[target_k].words[0], backtraces[target_k].words[1]);
 
 #ifdef DEBUG_MODE
     if (blockIdx.x == 0 && tid == 0) {

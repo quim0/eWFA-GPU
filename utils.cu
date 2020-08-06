@@ -151,7 +151,7 @@ bool SequenceReader::read_n_alignments (int n) {
         SEQ_TYPE* curr_seq_ptr = this->get_sequences_buffer() + idx * this->max_seq_len;
 
         if (elem_idx == 0) {
-            // First element of the sequence (TEXT)
+            // First element of the sequence (PATTERN)
             if (buf[0] != '>') {
                 WF_ERROR("Invalid sequence format on line %d.\n"
                          "    %s\n", idx, buf);
@@ -162,9 +162,9 @@ bool SequenceReader::read_n_alignments (int n) {
             // +1 to avoid the '>' character
             memcpy(curr_seq_ptr, buf + 1, length - 2);
             curr_elem->alignment_idx = alignment_idx;
-            curr_elem->tlen = length - 2; // -1 for the initial >, -1 for \n
+            curr_elem->plen = length - 2; // -1 for the initial >, -1 for \n
         } else if (elem_idx == 1) {
-            // Second element of the sequence (PATTERN)
+            // Second element of the sequence (TEXT)
             if (buf[0] != '<') {
                 WF_ERROR("Invalid sequence format on line %d.\n"
                          "    %s\n", idx, buf);
@@ -174,7 +174,7 @@ bool SequenceReader::read_n_alignments (int n) {
             }
             // +1 to avoid the '<' character
             memcpy(curr_seq_ptr, buf + 1, length - 2);
-            curr_elem->plen = length - 2; // -1 for <, -1 for \n
+            curr_elem->tlen = length - 2; // -1 for <, -1 for \n
         }
 
         idx++;

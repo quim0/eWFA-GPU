@@ -134,12 +134,12 @@ public:
         // Get the backtraces wavefront and center it
         WF_backtrace_t* backtraces = this->get_backtraces_base(n) + this->max_distance;
         const size_t distance = backtraces->distance;
-        const int target_k = EWAVEFRONT_DIAGONAL(pattern_length, text_length);
-        DEBUG("TARGET DIAGONAL: %d, t: %zu, p: %zu\n", target_k, text_length, pattern_length);
+        const int target_k = EWAVEFRONT_DIAGONAL(text_length, pattern_length);
+        //DEBUG("TARGET DIAGONAL: %d, t: %zu, p: %zu\n", target_k, text_length, pattern_length);
         WF_backtrace_t* backtrace_packed = &backtraces[target_k];
 
         for (int i= -10; i<10; i++) {
-            printf("Backtrace k=%d --> %lld\n", i, backtraces[i].words[0]);
+            //printf("Backtrace k=%d --> %lld\n", i, backtraces[i].words[0]);
         }
 
         edit_cigar_t* cigar_ascii = this->get_cigar_ascii(n);

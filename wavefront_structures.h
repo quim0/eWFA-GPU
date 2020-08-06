@@ -38,8 +38,8 @@ struct edit_wavefronts_t {
     ewf_offset_t* offsets;
 };
 
-#define TEXT_PTR(idx, base_ptr, max_seq_len) ((SEQ_TYPE*)(base_ptr + idx * 2 * max_seq_len))
-#define PATTERN_PTR(idx, base_ptr, max_seq_len) ((SEQ_TYPE*)(base_ptr + (idx * 2 + 1) * max_seq_len))
+#define PATTERN_PTR(idx, base_ptr, max_seq_len) ((SEQ_TYPE*)(base_ptr + idx * 2 * max_seq_len))
+#define TEXT_PTR(idx, base_ptr, max_seq_len) ((SEQ_TYPE*)(base_ptr + (idx * 2 + 1) * max_seq_len))
 
 struct WF_element {
     // With the idx, the max_seq_length and the sequences memory base pointer,
@@ -67,9 +67,9 @@ struct WF_backtrace_t {
 // code, so don't do it.
 typedef enum {
     OP_NOOP, // Use for delimitation
-    OP_DEL = 3,  // k + 1, "going up"
-    OP_SUB = 2,  // k
-    OP_INS = 1   // k - 1, "going down"
+    OP_DEL = 3,  // k + 1, "going up" 0b11
+    OP_SUB = 2,  // k 0b10
+    OP_INS = 1   // k - 1, "going down" 0b01
 } WF_backtrace_op_t;
 
 #endif

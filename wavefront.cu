@@ -183,8 +183,9 @@ void Sequences::GPU_launch_wavefront_distance () {
     for (int i=0; i<blocks_x; i++) {
         if (this->h_cigars.check_cigar(i, this->elements[curr_position + i], seq_base_ptr, max_seq_len))
             total_corrects++;
-        else
-            DEBUG("CIGAR %d: %s", i, this->h_cigars.get_cigar_ascii(i));
+        else {
+            DEBUG("CIGAR target_k %d : %s", EWAVEFRONT_DIAGONAL(this->elements[curr_position + i].tlen, this->elements[curr_position + i].plen), this->h_cigars.get_cigar_ascii(i));
+        }
     }
 
     if (total_corrects == blocks_x)
