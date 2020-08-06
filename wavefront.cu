@@ -117,7 +117,7 @@ bool Sequences::GPU_prepare_memory_next_batch () {
 
     // Send the new text/pattern sequences to device
     size_t seq_size_bytes = this->sequences_reader.max_seq_len * sizeof(SEQ_TYPE);
-    SEQ_TYPE* first_pos_ptr = TEXT_PTR(this->elements[curr_position + this->initial_alignment].alignment_idx,
+    SEQ_TYPE* first_pos_ptr = PATTERN_PTR(this->elements[curr_position + this->initial_alignment].alignment_idx,
                                    this->sequences_reader.get_sequences_buffer(),
                                    this->sequences_reader.max_seq_len);
     cudaMemcpyAsync(this->sequences_device_ptr,
