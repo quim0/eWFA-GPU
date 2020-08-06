@@ -23,11 +23,6 @@
 #include <stdio.h>
 #include <cuda_runtime.h>
 
-#define EWAVEFRONT_V(k,offset) ((offset)-(k))
-#define EWAVEFRONT_H(k,offset) (offset)
-#define EWAVEFRONT_DIAGONAL(h,v) ((h)-(v))
-#define EWAVEFRONT_OFFSET(h,v)   (h)
-
 __host__ __device__ void pprint_wavefront(const edit_wavefronts_t* const wf) {
     const ewf_offset_t* const offsets = wf->offsets;
     const int hi = wf->d;
@@ -203,12 +198,15 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
         // Recover where the max comes from, 3 --> 0b11
         WF_backtrace_op_t op = (WF_backtrace_op_t)(max_p & 3);
 
-        WF_backtrace_t* curr_bt = &next_backtraces[k];
+        WF_backtrace_t* curr_bt = next_backtraces + k;
         WF_backtrace_t* prev_bt = &backtraces[k + (op - 2)];
 
         // set in next_backtraces the correct operation
-        int curr_d = wavefronts->d + 1;
-        WRITE_BT_OP(curr_bt, prev_bt, curr_d, op);
+        int curr_d = wavefronts->d;
+        int word = curr_d / 32;
+        curr_bt->words[0] = prev_bt->words[0];
+        curr_bt->words[1] = prev_bt->words[1];
+        curr_bt->words[word] |= (((uint64_t)op) <<  ((curr_d % 32) * 2));
     }
 
     if (tid == 0)
@@ -226,7 +224,7 @@ __global__ void WF_edit_distance (const WF_element* elements,
     const WF_element element = elements[blockIdx.x];
     // TODO: Backtraces could also fit in shared memory?
     WF_backtrace_t* const curr_backtraces_base  =
-                cigars.get_cigar_packed(blockIdx.x * WF_ELEMENTS(max_distance) * 2);
+                cigars.get_backtraces_base(blockIdx.x);
     // Center the backtraces
     WF_backtrace_t* backtraces = curr_backtraces_base + max_distance;
     WF_backtrace_t* next_backtraces = curr_backtraces_base +
@@ -246,6 +244,7 @@ __global__ void WF_edit_distance (const WF_element* elements,
         shared_pattern[i] = pattern[i];
     }
 
+    // Skip text/pattern
     ewf_offset_t* const shared_offsets =
                     (ewf_offset_t*)(&shared_mem_chunk[max_seq_len * 2]);
     // +2 to avoid loop peeling in the compute function
@@ -300,6 +299,18 @@ __global__ void WF_edit_distance (const WF_element* elements,
         backtraces = bt_tmp;
     }
     //WF_backtrace(wavefronts, cigars, target_k);
+
+    // TODO: Find an efficient way to do this
+    for (int i=0; i<WF_ELEMENTS(max_distance) && tid == 0; i++) {
+        curr_backtraces_base[i].distance = distance;
+        if (distance & 1) {
+            // If it's even copy the second backtraces column to the first column
+            curr_backtraces_base[i].words[0] = (backtraces - max_distance)[i].words[0];
+            curr_backtraces_base[i].words[1] = (backtraces - max_distance)[i].words[1];
+        }
+    }
+
+    printf("W0: %lld W1: %lld\n", backtraces[target_k].words[0], backtraces[target_k].words[1]);
 
 #ifdef DEBUG_MODE
     if (blockIdx.x == 0 && tid == 0) {

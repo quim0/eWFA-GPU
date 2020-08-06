@@ -24,6 +24,11 @@
 
 #include "wavefront_structures.h"
 
+#define EWAVEFRONT_V(k,offset) ((offset)-(k))
+#define EWAVEFRONT_H(k,offset) (offset)
+#define EWAVEFRONT_DIAGONAL(h,v) ((h)-(v))
+#define EWAVEFRONT_OFFSET(h,v)   (h)
+
 __global__ void WF_edit_distance (const WF_element* elements,
                                   SEQ_TYPE* seq_base_ptr,
                                   const size_t max_distance,

@@ -175,18 +175,17 @@ void Sequences::GPU_launch_wavefront_distance () {
 #ifdef DEBUG_MODE
     // CopyIn copies the packed backtraces in
     this->h_cigars.copyIn(this->d_cigars);
-    //size_t bt_offset_results = this->batch_size * WF_ELEMENTS(max_distance) * sizeof(WF_backtrace_t);
-    //cudaMemcpy((void*)this->backtraces_host_ptr, this->result_backtraces_device_ptr,
-    //           this->batch_size * sizeof(WF_backtrace_t), cudaMemcpyDeviceToHost);
-    //CUDA_CHECK_ERR;
     size_t curr_position = (this->batch_idx * this->batch_size) +
                         this->initial_alignment;
     SEQ_TYPE* seq_base_ptr = this->sequences_reader.get_sequences_buffer();
     size_t max_seq_len = this->sequences_reader.max_seq_len;
     int total_corrects = 0;
-    for (int i=0; i<blocks_x; i++)
+    for (int i=0; i<blocks_x; i++) {
         if (this->h_cigars.check_cigar(i, this->elements[curr_position + i], seq_base_ptr, max_seq_len))
             total_corrects++;
+        else
+            DEBUG("CIGAR %d: %s", i, this->h_cigars.get_cigar_ascii(i));
+    }
 
     if (total_corrects == blocks_x)
         DEBUG_GREEN("Correct alignments: %d/%d", total_corrects, blocks_x)
@@ -202,7 +201,6 @@ bool Sequences::prepare_next_batch () {
     CUDA_CHECK_ERR;
     bool ret;
 
-
     // This is async
     ret = this->GPU_prepare_memory_next_batch();
 
@@ -211,6 +209,7 @@ bool Sequences::prepare_next_batch () {
 
     // Put all the device cigars at 0 again
     this->d_cigars.device_reset();
+    this->h_cigars.reset();
 
     return ret;
 }

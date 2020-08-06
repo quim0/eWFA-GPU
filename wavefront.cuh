@@ -30,6 +30,11 @@
 #include "logger.h"
 #include "utils.h"
 
+#define EWAVEFRONT_V(k,offset) ((offset)-(k))
+#define EWAVEFRONT_H(k,offset) (offset)
+#define EWAVEFRONT_DIAGONAL(h,v) ((h)-(v))
+#define EWAVEFRONT_OFFSET(h,v)   (h)
+
 // Limit to 8GiB to be safe
 #define MAX_GPU_SIZE (1L << 33)
 
@@ -65,8 +70,10 @@ public:
         }
     }
 
-    __host__ __device__ WF_backtrace_t* get_cigar_packed (const int n) const {
-        return &this->data[n];
+    __host__ __device__ WF_backtrace_t* get_backtraces_base (const int n) const {
+        // This gets the beggining of the backtraces "wavefront", to center it
+        // add max_d to the pointer returned.
+        return &this->data[n * WF_ELEMENTS(this->max_distance) * 2];
     }
 
     __host__ edit_cigar_t* get_cigar_ascii (const int n) const {
@@ -76,6 +83,7 @@ public:
     __host__ void copyIn (const Cigars device_cigars) {
         cudaMemcpy(this->data, device_cigars.data, this->cigars_size_packed(), cudaMemcpyDeviceToHost);
         CUDA_CHECK_ERR;
+        DEBUG("Copied the packed backtraces from the device to host.");
     }
 
     __host__ void device_reset () {
@@ -83,6 +91,11 @@ public:
         CUDA_CHECK_ERR
     }
 
+    __host__ void reset () {
+        memset(this->cigars_ascii, 0, this->cigars_size_bytes());
+    }
+
+#if 0
     __host__ void print_cigar (const int n) const {
         // Cigar is in reverse order
         edit_cigar_t* curr_cigar = this->get_cigar_ascii(n);
@@ -92,27 +105,143 @@ public:
         }
         printf("\n");
     }
+#endif
+
+	__host__ ewf_offset_t extend_wavefront (
+            const ewf_offset_t offset_val,
+            const int curr_k,
+            const char* const pattern,
+            const int pattern_length,
+            const char* const text,
+            const int text_length) {
+        // Parameters
+        int v = EWAVEFRONT_V(curr_k, offset_val);
+        int h = EWAVEFRONT_H(curr_k, offset_val);
+        ewf_offset_t acc = 0;
+        while (v<pattern_length && h<text_length && pattern[v++]==text[h++]) {
+          acc++;
+        }
+        return acc;
+	}
+
+    __host__ edit_cigar_t* generate_ascii_cigar (const int n,
+                                        const SEQ_TYPE* text,
+                                        const int text_length,
+                                        const SEQ_TYPE* pattern,
+                                        const int pattern_length) {
+        // Generate the ASCII cigar from the packed one, get the "n"th cigar
+
+        // Get the backtraces wavefront and center it
+        WF_backtrace_t* backtraces = this->get_backtraces_base(n) + this->max_distance;
+        const size_t distance = backtraces->distance;
+        const int target_k = EWAVEFRONT_DIAGONAL(pattern_length, text_length);
+        DEBUG("TARGET DIAGONAL: %d, t: %zu, p: %zu\n", target_k, text_length, pattern_length);
+        WF_backtrace_t* backtrace_packed = &backtraces[target_k];
+
+        for (int i= -10; i<10; i++) {
+            printf("Backtrace k=%d --> %lld\n", i, backtraces[i].words[0]);
+        }
+
+        edit_cigar_t* cigar_ascii = this->get_cigar_ascii(n);
+
+        // Assume that the packed cigar have two 64 bit words
+		ewf_offset_t curr_off_value = 0;
+        int curr_k = 0;
+        for (int d=0; d<distance; d++) {
+            // Compute the extend
+            ewf_offset_t acc = this->extend_wavefront(curr_off_value,
+                                                     curr_k,
+                                                     pattern,
+                                                     pattern_length,
+                                                     text,
+                                                     text_length);
+            for (int j=0; j<acc; j++) {
+                *cigar_ascii = 'M';
+                cigar_ascii++;
+            }
+
+            curr_off_value += acc;
+
+            const int w_idx = d / 32;
+            const int w_mod = d % 32;
+
+            // 3 --> 0b11
+            uint64_t op = (uint64_t)
+                            ((backtrace_packed->words[w_idx] >> (w_mod * 2)) & 3);
+            switch (op) {
+                // k + 1
+                case OP_DEL:
+                    *cigar_ascii = 'D';
+                    curr_k--;
+                    break;
+                // k
+                case OP_SUB:
+                    *cigar_ascii = 'X';
+                    curr_off_value++;
+                    break;
+                // k  - 1
+                case OP_INS:
+                    *cigar_ascii = 'I';
+                    curr_k++;
+                    curr_off_value++;
+                    break;
+                default:
+                    DEBUG("Incorrect operation found: %d", op);
+                    printf("i: %d, k: %d, curr_off: %d, op: %x, bt: 0x%lx, d: %zu\n",
+                    w_mod, curr_k, curr_off_value, op, backtrace_packed->words[w_idx], distance);
+                    return 0;
+                    //WF_FATAL("Invalid packed value in backtrace\n");
+            }
+            cigar_ascii++;
+        }
+
+        // Make one last extension
+        ewf_offset_t acc = this->extend_wavefront(curr_off_value,
+                                                 curr_k,
+                                                 pattern,
+                                                 pattern_length,
+                                                 text,
+                                                 text_length);
+        for (int j=0; j<acc; j++) {
+            *cigar_ascii = 'M';
+            cigar_ascii++;
+        }
+
+        return this->get_cigar_ascii(n);
+    }
 
     __host__ bool check_cigar (const int n, const WF_element element,
                                const SEQ_TYPE* seq_base_ptr,
-                               const size_t max_seq_len) const {
-        const edit_cigar_t* curr_cigar = this->get_cigar_ascii(n);
-        const size_t cigar_len = strnlen(curr_cigar, this->cigar_max_len);
+                               const size_t max_seq_len) {
         int text_pos = 0, pattern_pos = 0;
         SEQ_TYPE* text = TEXT_PTR(element.alignment_idx, seq_base_ptr,
                                   max_seq_len);
         SEQ_TYPE* pattern = PATTERN_PTR(element.alignment_idx, seq_base_ptr,
                                         max_seq_len);
-        // Cigar is reversed
+
+        const edit_cigar_t* curr_cigar = this->generate_ascii_cigar(n,
+                                                        text,
+                                                        element.tlen,
+                                                        pattern,
+                                                        element.plen);
+        if (!curr_cigar)
+            return false;
+#ifdef DEBUG_MODE
+        if (n == 0) {
+            DEBUG("CIGAR: %s", curr_cigar);
+        }
+#endif
+        const size_t cigar_len = strnlen(curr_cigar, this->cigar_max_len);
+
         for (int i=0; i<cigar_len; i++) {
-            edit_cigar_t curr_cigar_element = curr_cigar[cigar_len - i - 1];
+            edit_cigar_t curr_cigar_element = curr_cigar[i];
             switch (curr_cigar_element) {
                 case 'M':
                     if (pattern[pattern_pos] != text[text_pos]) {
-                        //DEBUG("Alignment not matching at CCIGAR index %d"
-                        //      " (pattern[%d] = %c != text[%d] = %c)",
-                        //      i, pattern_pos, pattern[pattern_pos],
-                        //      text_pos, text[text_pos]);
+                        DEBUG("Alignment not matching at CCIGAR index %d"
+                              " (pattern[%d] = %c != text[%d] = %c)",
+                              i, pattern_pos, pattern[pattern_pos],
+                              text_pos, text[text_pos]);
                         return false;
                     }
                     ++pattern_pos;
@@ -126,10 +255,10 @@ public:
                     break;
                 case 'X':
                     if (pattern[pattern_pos] == text[text_pos]) {
-                        //DEBUG("Alignment not mismatching at CCIGAR index %d"
-                        //      " (pattern[%d] = %c == text[%d] = %c)",
-                        //      i, pattern_pos, pattern[pattern_pos],
-                        //      text_pos, text[text_pos]);
+                        DEBUG("Alignment not mismatching at CCIGAR index %d"
+                              " (pattern[%d] = %c == text[%d] = %c)",
+                              i, pattern_pos, pattern[pattern_pos],
+                              text_pos, text[text_pos]);
                         return false;
                     }
                     ++pattern_pos;
@@ -142,14 +271,16 @@ public:
         }
 
         if (pattern_pos != element.plen) {
-            //DEBUG("Alignment incorrect length, pattern-aligned: %d, "
-            //      "pattern-length: %zu.", pattern_pos, element.plen);
+            DEBUG("Alignment incorrect length, pattern-aligned: %d, "
+                  "pattern-length: %zu. (n: %d)", pattern_pos, element.plen, n);
+            DEBUG("TEXT: %s", text);
+            DEBUG("PATTERN: %s", pattern);
             return false;
         }
 
         if (text_pos != element.tlen) {
-            //DEBUG("Alignment incorrect length, text-aligned: %d, "
-            //      "text-length: %zu", text_pos, element.tlen);
+            DEBUG("Alignment incorrect length, text-aligned: %d, "
+                  "text-length: %zu", text_pos, element.tlen);
             return false;
         }
 
