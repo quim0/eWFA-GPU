@@ -157,7 +157,9 @@ void Sequences::GPU_launch_wavefront_distance () {
     int shared_mem = this->sequences_reader.max_seq_len * 2
                      // 2 complete wavefronts, add 2 to the number of elements
                      // in a wavefront to avoid loop peeling
-                     + 2 * (WF_ELEMENTS(this->max_distance) + 2) * sizeof(ewf_offset_t);
+                     + 2 * (WF_ELEMENTS(this->max_distance) + 2) * sizeof(ewf_offset_t)
+                     // 2 complete wavefronts of backtraces
+                     + 2 * WF_ELEMENTS(this->max_distance) * sizeof(WF_backtrace_t);
 
     // Wait until the sequences are copied to the device
     cudaStreamSynchronize(this->HtD_stream);
@@ -183,9 +185,6 @@ void Sequences::GPU_launch_wavefront_distance () {
     for (int i=0; i<blocks_x; i++) {
         if (this->h_cigars.check_cigar(i, this->elements[curr_position + i], seq_base_ptr, max_seq_len))
             total_corrects++;
-        else {
-            DEBUG("CIGAR target_k %d : %s", EWAVEFRONT_DIAGONAL(this->elements[curr_position + i].tlen, this->elements[curr_position + i].plen), this->h_cigars.get_cigar_ascii(i));
-        }
     }
 
     if (total_corrects == blocks_x)
@@ -209,8 +208,8 @@ bool Sequences::prepare_next_batch () {
     this->h_cigars.copyIn(this->d_cigars);
 
     // Put all the device cigars at 0 again
-    this->d_cigars.device_reset();
-    this->h_cigars.reset();
+    //this->d_cigars.device_reset();
+    //this->h_cigars.reset();
 
     return ret;
 }

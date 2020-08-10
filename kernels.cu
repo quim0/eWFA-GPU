@@ -198,9 +198,6 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
         // Recover where the max comes from, 3 --> 0b11
         WF_backtrace_op_t op = (WF_backtrace_op_t)(max_p & 3);
 
-        //pprint_wavefront(wavefronts);
-        //printf("op: %d k: %d\n", op, k);
-
         WF_backtrace_t* curr_bt = next_backtraces + k;
         WF_backtrace_t* prev_bt = &backtraces[k + (op - 2)];
 
@@ -225,13 +222,6 @@ __global__ void WF_edit_distance (const WF_element* elements,
     extern __shared__ uint8_t shared_mem_chunk[];
     const int tid = threadIdx.x;
     const WF_element element = elements[blockIdx.x];
-    // TODO: Backtraces could also fit in shared memory?
-    WF_backtrace_t* const curr_backtraces_base  =
-                cigars.get_backtraces_base(blockIdx.x);
-    // Center the backtraces
-    WF_backtrace_t* backtraces = curr_backtraces_base + max_distance;
-    WF_backtrace_t* next_backtraces = curr_backtraces_base +
-                                        WF_ELEMENTS(max_distance) + max_distance;
 
     SEQ_TYPE* const shared_text = (SEQ_TYPE*)&shared_mem_chunk[0];
     SEQ_TYPE* const shared_pattern = (SEQ_TYPE*)&shared_mem_chunk[max_seq_len];
@@ -270,6 +260,18 @@ __global__ void WF_edit_distance (const WF_element* elements,
     edit_wavefronts_t* wavefronts = &wavefronts_obj;
     edit_wavefronts_t* next_wavefronts = &next_wavefronts_obj;
 
+    // Get backtraces from shared memory, skip the last offset
+
+    // TODO: Why dynamically allocated shared memory launch unaligned address
+    // error?
+    __shared__ WF_backtrace_t backtraces_shared[WF_ELEMENTS(64)];
+    __shared__ WF_backtrace_t next_backtraces_shared[WF_ELEMENTS(64)];
+
+    // We can not swap arrays so declare pointers here, also it's needed for
+    // centering the array
+    WF_backtrace_t* backtraces = backtraces_shared + max_distance;
+    WF_backtrace_t* next_backtraces = next_backtraces_shared + max_distance;
+
     // The first offsets must be 0, not -1
     if (tid == 0)
         wavefronts->offsets[0] = 0;
@@ -301,19 +303,11 @@ __global__ void WF_edit_distance (const WF_element* elements,
         next_backtraces = backtraces;
         backtraces = bt_tmp;
     }
-    //WF_backtrace(wavefronts, cigars, target_k);
 
-    // TODO: Find an efficient way to do this
-    for (int i=0; i<WF_ELEMENTS(max_distance) && tid == 0; i++) {
-        curr_backtraces_base[i].distance = distance;
-        if (distance & 1) {
-            // If it's even copy the second backtraces column to the first column
-            curr_backtraces_base[i].words[0] = (backtraces - max_distance)[i].words[0];
-            curr_backtraces_base[i].words[1] = (backtraces - max_distance)[i].words[1];
-        }
-    }
-
-    //printf("W0: %lld W1: %lld\n", backtraces[target_k].words[0], backtraces[target_k].words[1]);
+    WF_backtrace_result_t *curr_res = cigars.get_backtraces(blockIdx.x);
+    curr_res->distance = distance;
+    curr_res->words[0] = backtraces[target_k].words[0];
+    curr_res->words[1] = backtraces[target_k].words[1];
 
 #ifdef DEBUG_MODE
     if (blockIdx.x == 0 && tid == 0) {

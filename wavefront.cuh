@@ -50,14 +50,12 @@ public:
         this->cigar_max_len = cigar_max_len + 1;
         if (device) {
             DEBUG("Allocating %zu MiB to store the partial backtraces",
-                  this->cigars_size_packed() / (1 << 20));
-            cudaMalloc((void**) &(this->data), this->cigars_size_packed());
-            CUDA_CHECK_ERR
-            cudaMemset(this->data, 0, this->cigars_size_packed());
+                  this->cigars_results_size() / (1 << 20));
+            cudaMalloc((void**) &(this->data), this->cigars_results_size());
             CUDA_CHECK_ERR
         }
         else {
-            cudaMallocHost((void**)&this->data, this->cigars_size_packed());
+            cudaMallocHost((void**)&this->data, this->cigars_results_size());
             if (!this->data) {
                 fprintf(stderr, "Out of memory on host. (%s:%d)", __FILE__, __LINE__);
                 exit(1);
@@ -70,10 +68,9 @@ public:
         }
     }
 
-    __host__ __device__ WF_backtrace_t* get_backtraces_base (const int n) const {
-        // This gets the beggining of the backtraces "wavefront", to center it
-        // add max_d to the pointer returned.
-        return &this->data[n * WF_ELEMENTS(this->max_distance) * 2];
+    __host__ __device__ WF_backtrace_result_t* get_backtraces (const int n) const {
+        // Get the backtraces of alignment "n"
+        return &this->data[n];
     }
 
     __host__ edit_cigar_t* get_cigar_ascii (const int n) const {
@@ -81,13 +78,13 @@ public:
     }
 
     __host__ void copyIn (const Cigars device_cigars) {
-        cudaMemcpy(this->data, device_cigars.data, this->cigars_size_packed(), cudaMemcpyDeviceToHost);
+        cudaMemcpy(this->data, device_cigars.data, this->cigars_results_size(), cudaMemcpyDeviceToHost);
         CUDA_CHECK_ERR;
         DEBUG("Copied the packed backtraces from the device to host.");
     }
 
     __host__ void device_reset () {
-        cudaMemset(this->data, 0, this->cigars_size_packed());
+        cudaMemset(this->data, 0, this->cigars_results_size());
         CUDA_CHECK_ERR
     }
 
@@ -131,16 +128,8 @@ public:
                                         const int pattern_length) {
         // Generate the ASCII cigar from the packed one, get the "n"th cigar
 
-        // Get the backtraces wavefront and center it
-        WF_backtrace_t* backtraces = this->get_backtraces_base(n) + this->max_distance;
-        const size_t distance = backtraces->distance;
-        const int target_k = EWAVEFRONT_DIAGONAL(text_length, pattern_length);
-        //DEBUG("TARGET DIAGONAL: %d, t: %zu, p: %zu\n", target_k, text_length, pattern_length);
-        WF_backtrace_t* backtrace_packed = &backtraces[target_k];
-
-        for (int i= -10; i<10; i++) {
-            //printf("Backtrace k=%d --> %lld\n", i, backtraces[i].words[0]);
-        }
+        WF_backtrace_result_t* backtrace_packed = this->get_backtraces(n);
+        const size_t distance = backtrace_packed->distance;
 
         edit_cigar_t* cigar_ascii = this->get_cigar_ascii(n);
 
@@ -186,11 +175,8 @@ public:
                     curr_off_value++;
                     break;
                 default:
-                    DEBUG("Incorrect operation found: %d", op);
-                    printf("i: %d, k: %d, curr_off: %d, op: %x, bt: 0x%lx, d: %zu\n",
-                    w_mod, curr_k, curr_off_value, op, backtrace_packed->words[w_idx], distance);
-                    return 0;
-                    //WF_FATAL("Invalid packed value in backtrace\n");
+                    DEBUG("Incorrect operation found: %lu", op);
+                    WF_FATAL("Invalid packed value in backtrace\n");
             }
             cigar_ascii++;
         }
@@ -290,15 +276,13 @@ private:
     size_t cigars_size_bytes () {
         return this->num_cigars * this->cigar_max_len * sizeof(edit_cigar_t);
     }
-    size_t cigars_size_packed () {
-        // *2 to have backtraces and next_backtraces per alignment, same
-        // strategy as with offsets (having two pointers swapping)
-        return 2 * this->num_cigars * WF_ELEMENTS(this->max_distance) * sizeof(WF_backtrace_t);
+    size_t cigars_results_size () {
+        return this->num_cigars * sizeof(WF_backtrace_result_t);
     }
     size_t max_distance;
     size_t cigar_max_len;
     int num_cigars;
-    WF_backtrace_t* data;
+    WF_backtrace_result_t* data;
     edit_cigar_t* cigars_ascii;
 };
 
