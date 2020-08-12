@@ -157,9 +157,7 @@ void Sequences::GPU_launch_wavefront_distance () {
     int shared_mem = this->sequences_reader.max_seq_len * 2
                      // 2 complete wavefronts, add 2 to the number of elements
                      // in a wavefront to avoid loop peeling
-                     + 2 * (WF_ELEMENTS(this->max_distance) + 2) * sizeof(ewf_offset_t)
-                     // 2 complete wavefronts of backtraces
-                     + 2 * WF_ELEMENTS(this->max_distance) * sizeof(WF_backtrace_t);
+                     + 2 * (WF_ELEMENTS(this->max_distance) + 2) * sizeof(ewf_offset_t);
 
     // Wait until the sequences are copied to the device
     cudaStreamSynchronize(this->HtD_stream);
