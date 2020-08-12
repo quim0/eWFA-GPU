@@ -209,7 +209,7 @@ bool Sequences::prepare_next_batch () {
 
     // Put all the device cigars at 0 again
     //this->d_cigars.device_reset();
-    //this->h_cigars.reset();
+    this->h_cigars.reset();
 
     return ret;
 }
