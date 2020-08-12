@@ -266,6 +266,10 @@ __global__ void WF_edit_distance (const WF_element* elements,
     // error?
     __shared__ WF_backtrace_t backtraces_shared[WF_ELEMENTS(64)];
     __shared__ WF_backtrace_t next_backtraces_shared[WF_ELEMENTS(64)];
+    for (int i=tid; i<WF_ELEMENTS(64); i += blockDim.x) {
+        backtraces_shared[i] = {0};
+        next_backtraces_shared[i] = {0};
+    }
 
     // We can not swap arrays so declare pointers here, also it's needed for
     // centering the array
