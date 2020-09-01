@@ -176,8 +176,6 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
     const int hi = wavefronts->d;
     const int lo = -wavefronts->d;
 
-    __syncthreads();
-
     for(int k = lo + tid - 1; k <= hi + 1; k += tnum) {
         const ewf_offset_t max_ins_sub = max(offsets[k], offsets[k - 1]) + 1;
         next_offsets[k] = max(max_ins_sub, offsets[k + 1]);

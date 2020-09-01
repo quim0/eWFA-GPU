@@ -77,8 +77,8 @@ void SequenceReader::create_sequences_buffer () {
     size_t bytes_to_alloc = this->num_alignments * this->max_seq_len * 2 * sizeof(SEQ_TYPE);
     DEBUG("Trying to allocate %zu GiB to store the sequences.",
           bytes_to_alloc / (1 << 30));
-    //cudaMallocHost((void**)&this->sequences_mem, bytes_to_alloc);
-    this->sequences_mem = (SEQ_TYPE*)calloc(bytes_to_alloc, 1);
+    cudaMallocHost((void**)&this->sequences_mem, bytes_to_alloc);
+    //this->sequences_mem = (SEQ_TYPE*)calloc(bytes_to_alloc, 1);
     if (!this->sequences_mem)
         WF_FATAL(NOMEM_ERR_STR);
     DEBUG("Allocated %zu GiB to store the sequences.",
