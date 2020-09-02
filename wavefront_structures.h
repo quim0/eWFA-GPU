@@ -49,12 +49,6 @@ struct WF_element {
     size_t plen;
 };
 
-//backtrace->words[word] = (prev_backtrace->words[word] << 2) | op;
-// Assume 128 bit backtrace, composed of 2 64bit words
-//#define WRITE_BT_OP(backtrace, prev_backtrace, d, op) \
-//    int word = d / 32; \
-//    backtrace->words[word] = prev_backtrace->words[word] | (((uint64_t)op) << ((d % 32) * 2));
-
 // 128 bit backtrace data, max_distance = 64
 struct WF_backtrace_t {
     uint64_t words[2];

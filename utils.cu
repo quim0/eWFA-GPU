@@ -73,7 +73,7 @@ void SequenceReader::create_sequences_buffer () {
     // As now we read the whole file, if it's large it'll be difficult to find a
     // phisycal contiguous memory space of e.g 20GiB (for 5M alignments of 1K
     // sequence length)
-    // TODO: Allocate exactly the size of the file to save memory
+    // TODO: Allocate exactly the size of the file to save memory ??
     size_t bytes_to_alloc = this->num_alignments * this->max_seq_len * 2 * sizeof(SEQ_TYPE);
     DEBUG("Trying to allocate %zu GiB to store the sequences.",
           bytes_to_alloc / (1 << 30));
@@ -86,6 +86,9 @@ void SequenceReader::create_sequences_buffer () {
 }
 
 SEQ_TYPE* SequenceReader::get_sequences_buffer () {
+    // Big chunk of memory where all the sequences will be stored
+    // The final nullbyte WILL NOT be stored as we already know the maximum
+    // sequence size.
     if (this->sequences_mem == NULL) {
         this->create_sequences_buffer();
     }
@@ -128,12 +131,6 @@ bool SequenceReader::read_n_alignments (int n) {
     // Buffer to temporary allocate each line
     size_t buf_size = this->sequence_buffer_size();
     SEQ_TYPE* buf = this->create_sequence_buffer();
-
-    // Big chunk of memory where all the sequences will be stored
-    // The final nullbyte WILL NOT be stored as we already know the string size
-    // num_alignments is the number of sequences pairs (pattern/text), so it's
-    // nedded to double the space required.
-    SEQ_TYPE* seq_alloc = this->get_sequences_buffer();
 
     bool retval = true;
 
