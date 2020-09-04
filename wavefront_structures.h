@@ -70,4 +70,12 @@ typedef enum {
     OP_INS = 1   // k - 1, "going down" 0b01
 } WF_backtrace_op_t;
 
+// Encode sequence elements in two bytes
+typedef enum {
+    A, // 00
+    G, // 01
+    C, // 10
+    T  // 11
+} WF_sequence_element_t;
+
 #endif
