@@ -109,14 +109,14 @@ This functions packs the sequences, that are encoded as 1 byte per element in
 the input file, as there can only be 4 different element values (A, G, C, T), it
 can be stoed in 2 bits per element.
 
-Sequences are packed in "little endian" style, less significant bits are the
-lower positions, and more significant bits the highest positions of the
-sequence. So when reading the sequences elements from a byte it should be read
-"right to left", from less to more significant bits.
+Sequences are packed in "big endian" style, more significant bits contains lower
+positions of the sequences. This is equivalent to "reading" the bytes right to
+left. This is done because in current nvidia cards there's "clz" instructions
+but no "ctz".
 
                       Byte 0       Byte 1
 Packed sequences: [00 01 11 01] [11 10 01 01]
-Element position:  3  2  1  0    7  6  5  4
+Element position:  0  1  2  3    4  5  6  7
 */
 void SequenceReader::pack_sequence (uint8_t* curr_seq_ptr, SEQ_TYPE* seq_buf, size_t buf_len) {
     // Skip the initial < or >
@@ -144,8 +144,9 @@ void SequenceReader::pack_sequence (uint8_t* curr_seq_ptr, SEQ_TYPE* seq_buf, si
         }
 
         // i mod 4, as there's space for 4 elements per byte, *2 because
-        // there're two bits per element
-        int shl = (i & 3) * 2;
+        // there're two bits per element. "3 -"  to make lower positions of the
+        // sequences go to the more significant bits.
+        int shl = (3 - (i % 4)) * 2;
         int byte_idx = i / 4;
 
         curr_seq_ptr[byte_idx] |= (uint8_t)curr_seq_elem << shl;
