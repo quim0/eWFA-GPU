@@ -191,6 +191,7 @@ bool SequenceReader::read_n_alignments (int n) {
     // >TEXTGGG
     // <PATTERN
     ssize_t length;
+    PUSH_RANGE("read_n_sequences", 1)
     while (alignment_idx < n && (length = getline(&buf, &buf_size, this->fp)) > 0) {
         WF_element *curr_elem = &(this->sequences[alignment_idx]);
         // Pointer where the current sequence will be allocated in the big
@@ -230,6 +231,7 @@ bool SequenceReader::read_n_alignments (int n) {
 
         this->num_sequences_read++;
     }
+    POP_RANGE
 
 #ifdef DEBUG_MODE
     if (retval) {

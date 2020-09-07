@@ -55,13 +55,15 @@ public:
                                     size_t batch_size) : \
                                               seq_file(seq_file),           \
                                               seq_len(seq_len),             \
-                                              max_seq_len(seq_len * 2),     \
                                               num_alignments(num_alignments), \
                                               batch_size(batch_size),       \
                                               sequences(NULL),              \
                                               sequences_mem(NULL),       \
                                               fp(NULL),                     \
                                               num_sequences_read(0) {
+        // Max sequence length in bytes, encoding the sequence elements in 2
+        // bits (4 elements per byte)
+        this->max_seq_len = ((seq_len / 4) + (seq_len % 4)) * 2;
         DEBUG("SequenceReader created:\n"
               "    File: %s\n"
               "    Sequence avg length: %zu\n"
@@ -86,6 +88,7 @@ private:
     size_t sequence_buffer_size ();
     void create_sequences_buffer ();
     SEQ_TYPE* create_sequence_buffer ();
+    void pack_sequence (uint8_t* curr_seq_ptr, SEQ_TYPE* seq_buf, size_t buf_len);
 };
 
 #endif // Header guard UTLS_H

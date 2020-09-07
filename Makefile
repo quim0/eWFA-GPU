@@ -7,6 +7,6 @@ all:
 debug:
 	$(CC) $(SRC) $(ARGS) -DDEBUG_MODE -g -G -o wfa.edit.distance.gpu
 profile:
-	$(CC) $(SRC) $(ARGS) -lineinfo -o wfa.edit.distance.gpu
+	$(CC) $(SRC) $(ARGS) -DUSE_NVTX -lnvToolsExt -lineinfo -o wfa.edit.distance.gpu
 clean:
 	rm -f wfa.edit.distance.gpu
