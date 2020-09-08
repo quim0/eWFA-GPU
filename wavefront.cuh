@@ -196,14 +196,38 @@ public:
         return this->get_cigar_ascii(n);
     }
 
+    __host__ SEQ_TYPE* generate_ascii_sequence (const SEQ_TYPE* seq_packed,
+                                                const size_t len) {
+        SEQ_TYPE* ascii_seq_buf = (SEQ_TYPE*)calloc(len, sizeof(SEQ_TYPE));
+        if (!ascii_seq_buf) {
+            WF_FATAL(NOMEM_ERR_STR);
+        }
+
+        // WARNING: Before changing this make sure is coherent with
+        // WF_sequence_element_t
+        const char elems_lut[4] = {'A', 'G', 'C', 'T'};
+
+        for (int i=0; i<len; i++) {
+            int byte_idx = i / 4;
+            int shr = (3 - (i % 4)) * 2;
+            WF_sequence_element_t curr_elem =
+                (WF_sequence_element_t)((seq_packed[byte_idx] >> shr) & 0x3);
+            ascii_seq_buf[i] = elems_lut[curr_elem];
+        }
+        return ascii_seq_buf;
+    }
+
     __host__ bool check_cigar (const int n, const WF_element element,
                                const SEQ_TYPE* seq_base_ptr,
                                const size_t max_seq_len) {
         int text_pos = 0, pattern_pos = 0;
-        SEQ_TYPE* text = TEXT_PTR(element.alignment_idx, seq_base_ptr,
+        SEQ_TYPE* text_packed  = TEXT_PTR(element.alignment_idx, seq_base_ptr,
                                   max_seq_len);
-        SEQ_TYPE* pattern = PATTERN_PTR(element.alignment_idx, seq_base_ptr,
+        SEQ_TYPE* pattern_packed = PATTERN_PTR(element.alignment_idx, seq_base_ptr,
                                         max_seq_len);
+
+        SEQ_TYPE* text = generate_ascii_sequence(text_packed, element.tlen);
+        SEQ_TYPE* pattern = generate_ascii_sequence(pattern_packed, element.plen);
 
         const edit_cigar_t* curr_cigar = this->generate_ascii_cigar(n,
                                                         text,

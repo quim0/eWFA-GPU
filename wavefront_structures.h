@@ -71,6 +71,8 @@ typedef enum {
 } WF_backtrace_op_t;
 
 // Encode sequence elements in two bytes
+// WARNING: Before changing this make sure is coherent with the translation
+// array in generate_ascii_sequence(...) (wavefront.cuh)
 typedef enum {
     A, // 00
     G, // 01
