@@ -50,52 +50,58 @@ __device__ void WF_extend_kernel (const WF_element element,
 
         int acc = 0;
         while ((v + 4) < plen && (h + 4) < tlen) {
-            const SEQ_TYPE* curr_pattern_ptr = &pattern[v];
-            const SEQ_TYPE* curr_text_ptr = &text[h];
+            int real_v = v / 4;
+            int real_h = h / 4;
+            // v % 4
+            int pattern_displacement = v & 3;
+            int text_displacement = h & 3;
+            int displacement_elements  = max(pattern_displacement, text_displacement);
 
-            // 0xffffff00
-            uintptr_t alignment_mask = (uintptr_t)-1 << 2;
-            // Align addresses to 4 bytes
-            SEQ_TYPE* curr_pattern_ptr_aligned =
-                                (SEQ_TYPE*)((uintptr_t)curr_pattern_ptr & alignment_mask);
-            SEQ_TYPE* curr_text_ptr_aligned =
-                                (SEQ_TYPE*)((uintptr_t)curr_text_ptr & alignment_mask);
+            // * 2 because each element is 2 bits
+            uint8_t byte_p = pattern[real_v] << (pattern_displacement * 2);
+            uint8_t byte_t = text[real_h] << (text_displacement * 2);
 
-            // 0x3 --> 0b11
-            unsigned int pattern_bytes_to_remove = (uintptr_t)curr_pattern_ptr & 0x3;
-            unsigned int text_bytes_to_remove = (uintptr_t)curr_text_ptr & 0x3;
-            unsigned int bytes_to_remove = max(pattern_bytes_to_remove,
-                                               text_bytes_to_remove);
+            uint8_t diff = byte_p ^ byte_t;
+            // diff gets converted to int (32 bits), so it's necessary to remove
+            // the first 3 bytes of zeroes
+            int lz = __clz(diff) - 24;
+            int useful_elements = 4 - displacement_elements;
+            // each element has 2 bits
+            int eq_elements = min(lz / 2, useful_elements);
+            acc += eq_elements;
 
-            uint32_t packed_pattern = *(uint32_t*)curr_pattern_ptr_aligned;
-            uint32_t packed_text = *(uint32_t*)curr_text_ptr_aligned;
-
-            // Rightshift because the data is little-endian encoded
-            packed_pattern = packed_pattern >> (pattern_bytes_to_remove * 8);
-            packed_text = packed_text >> (text_bytes_to_remove * 8);
-
-            uint32_t xored_val = packed_pattern ^ packed_text;
-            uint32_t b0 = (xored_val & 0xff) << 24;
-            uint32_t b1 = (xored_val & 0xff00) << 8;
-            uint32_t b2 = (xored_val & 0xff0000) >> 8;
-            uint32_t b3 = (xored_val & 0xff000000) >> 24;
-            xored_val  = b0 | b1 | b2 | b3;
-
-            int lz = __clz(xored_val);
-            int useful_bytes = 4 - bytes_to_remove;
-            acc += min(lz / 8, useful_bytes);
-            if (lz < (useful_bytes * 8)) {
+            if (eq_elements < useful_elements) {
                 goto end_extend;
             }
 
-            v += useful_bytes;
-            h += useful_bytes;
+            v += eq_elements;
+            h += eq_elements;
         }
 
-        while (v < plen && h < tlen && pattern[v++] == text[h++])
-            acc++;
+        // TODO: Don't do this one by one
+        // Get the last elements in case is not a multiple of 4
+        while (v < plen && h < tlen) {
+            int real_v = v / 4;
+            int real_h = h / 4;
+            // v % 4
+            int pattern_displacement = (3 - (v & 3)) * 2;
+            int text_displacement = (3 - (h & 3)) * 2;
+
+            // Get only one position
+            uint8_t bits_p = (pattern[real_v] >> pattern_displacement) & 3;
+            uint8_t bits_t = (text[real_h] >> text_displacement) & 3;
+
+            if (bits_p == bits_t)
+                acc++;
+            else
+                goto end_extend;
+
+            v++;
+            h++;
+        }
 
 end_extend:
+
         offsets[k] += acc;
     }
     __syncthreads();
