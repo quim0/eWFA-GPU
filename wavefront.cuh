@@ -252,6 +252,8 @@ public:
                               " (pattern[%d] = %c != text[%d] = %c)",
                               i, pattern_pos, pattern[pattern_pos],
                               text_pos, text[text_pos]);
+                        free(text);
+                        free(pattern);
                         return false;
                     }
                     ++pattern_pos;
@@ -269,6 +271,8 @@ public:
                               " (pattern[%d] = %c == text[%d] = %c)",
                               i, pattern_pos, pattern[pattern_pos],
                               text_pos, text[text_pos]);
+                        free(text);
+                        free(pattern);
                         return false;
                     }
                     ++pattern_pos;
@@ -285,15 +289,21 @@ public:
                   "pattern-length: %zu. (n: %d)", pattern_pos, element.plen, n);
             DEBUG("TEXT: %s", text);
             DEBUG("PATTERN: %s", pattern);
+            free(text);
+            free(pattern);
             return false;
         }
 
         if (text_pos != element.tlen) {
             DEBUG("Alignment incorrect length, text-aligned: %d, "
                   "text-length: %zu", text_pos, element.tlen);
+            free(text);
+            free(pattern);
             return false;
         }
 
+        free(text);
+        free(pattern);
         return true;
     }
 private:
