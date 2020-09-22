@@ -64,6 +64,9 @@ public:
         // Max sequence length in bytes, encoding the sequence elements in 2
         // bits (4 elements per byte)
         this->max_seq_len = ((seq_len / 4) + (seq_len % 4)) * 2;
+        // Make sure sequences are 32 bits aligned
+        // TODO: CHECK THIS!
+        this->max_seq_len = this->max_seq_len + (this->max_seq_len % 4);
         DEBUG("SequenceReader created:\n"
               "    File: %s\n"
               "    Sequence avg length: %zu\n"

@@ -48,59 +48,94 @@ __device__ void WF_extend_kernel (const WF_element element,
         int v  = EWAVEFRONT_V(k, offsets[k]);
         int h  = EWAVEFRONT_H(k, offsets[k]);
 
+        const int bases_to_cmp = 16;
+        int eq_elements = 0;
         int acc = 0;
-        while ((v + 4) < plen && (h + 4) < tlen) {
-            int real_v = v / 4;
-            int real_h = h / 4;
-            // v % 4
-            int pattern_displacement = v & 3;
-            int text_displacement = h & 3;
-            int displacement_elements  = max(pattern_displacement, text_displacement);
+        // Compare 16 bases at once
+        while (v < plen && h < tlen) {
+            int real_v = v / 16;
+            int real_h = h / 16;
+
+            int pattern_displacement = v % 16;
+            int text_displacement = h % 16;
+
+            // 0xffffffffffffff00
+            //uintptr_t alignment_mask = (uintptr_t)-1 << 2;
+            //uint32_t* word_p_ptr = (uint32_t*)((uintptr_t)(pattern + real_v) & alignment_mask);
+            uint32_t* word_p_ptr = (uint32_t*)(pattern + real_v);
+            uint32_t* next_word_p_ptr = word_p_ptr + 1;
+            uint32_t* word_t_ptr = (uint32_t*)(text + real_h);
+            uint32_t* next_word_t_ptr = word_t_ptr + 1;
 
             // * 2 because each element is 2 bits
-            uint8_t byte_p = pattern[real_v] << (pattern_displacement * 2);
-            uint8_t byte_t = text[real_h] << (text_displacement * 2);
+            uint32_t sub_word_p_1 = (*word_p_ptr) << (pattern_displacement * 2);
+            // Cast to uint64_t is done to avoid undefined behaviour in case
+            // it's shifted by 32 elements.
+            // ----
+            // The type of the result is that of the promoted left operand. The
+            // behavior is undefined if the right operand is negative, or
+            // greater than or equal to the length in bits of the promoted left
+            // operand.
+            // ----
+            uint32_t sub_word_p_2 = ((uint64_t)*(next_word_p_ptr)) >>
+                ((bases_to_cmp - pattern_displacement) * 2);
 
-            uint8_t diff = byte_p ^ byte_t;
-            // diff gets converted to int (32 bits), so it's necessary to remove
-            // the first 3 bytes of zeroes
-            int lz = __clz(diff) - 24;
-            int useful_elements = 4 - displacement_elements;
+            uint32_t sub_word_t_1 = (*word_t_ptr) << (text_displacement * 2);
+            uint32_t sub_word_t_2 = ((uint64_t)*next_word_t_ptr) >>
+                ((bases_to_cmp - text_displacement) * 2);
+
+            uint32_t word_p = sub_word_p_1 | sub_word_p_2;
+            uint32_t word_t = sub_word_t_1 | sub_word_t_2;
+
+//if (tid==0 && blockIdx.x == 0 && k == 2)
+//	printf("v: %d, h:%d, word_1: %x, word 2: %x, sub_w1: %x, sub_w2: %x, word_p: %x\n", v, h, *word_p_ptr, *next_word_p_ptr, sub_word_p_1, sub_word_p_2, word_p);
+
+            uint32_t diff = word_p ^ word_t;
+            // Branchless method to remove the equal bits if we read "too far away"
+            // TODO: Find a better way to implement this?
+            uint32_t full_mask = (uint32_t)-1;
+            int next_v = v + bases_to_cmp;
+            int next_h = h + bases_to_cmp;
+            uint32_t mask_p = (next_v > plen) ?
+                full_mask << ((next_v - plen) * 2) : full_mask;
+            uint32_t mask_t = (next_h > tlen) ?
+                full_mask << ((next_h - tlen) * 2) : full_mask;
+            diff = diff  | ~mask_p | ~mask_t;
+
+            int lz = __clz(diff);
+
             // each element has 2 bits
-            int eq_elements = min(lz / 2, useful_elements);
+            eq_elements = lz / 2;
             acc += eq_elements;
 
-            if (eq_elements < useful_elements) {
-                goto end_extend;
+            if (tid==0 && blockIdx.x == 0 && eq_elements != 0) {
+                printf("eq_elements: %d, diff: %x\n", eq_elements, diff);
+                printf("(ptr: %p) v: %d, h:%d, word_1: %x, word 2: %x, sub_w1: %x, sub_w2: %x, word_p: %x\n", word_p_ptr, v, h, *word_p_ptr, *next_word_p_ptr, sub_word_p_1, sub_word_p_2, word_p);
+                printf("(ptr: %p) real_v: %d, real_h:%d, word_1: %x, word 2: %x, sub_w1: %x, sub_w2: %x, word_t: %x\n", word_t_ptr, real_v, real_h, *word_t_ptr, *next_word_t_ptr, sub_word_t_1, sub_word_t_2, word_t);
             }
 
-            v += eq_elements;
-            h += eq_elements;
+            if (eq_elements < bases_to_cmp) {
+                break;
+            }
+
+            v += bases_to_cmp;
+            h += bases_to_cmp;
         }
 
-        // TODO: Don't do this one by one
-        // Get the last elements in case is not a multiple of 4
-        while (v < plen && h < tlen) {
-            int real_v = v / 4;
-            int real_h = h / 4;
-            // v % 4
-            int pattern_displacement = (3 - (v & 3)) * 2;
-            int text_displacement = (3 - (h & 3)) * 2;
-
-            // Get only one position
-            uint8_t bits_p = (pattern[real_v] >> pattern_displacement) & 3;
-            uint8_t bits_t = (text[real_h] >> text_displacement) & 3;
-
-            if (bits_p == bits_t)
-                acc++;
-            else
-                goto end_extend;
-
-            v++;
-            h++;
+        /*
+        // Check if it has gone too far... And remove the appropiate "false
+        // matchs"
+        if (v > plen) {
+            // if (eq_elements > (v-plen)) acc -= elems_to_remove ?????
+            int elems_to_remove = eq_elements - (bases_to_cmp - (v - plen));
+            acc -= elems_to_remove;
         }
 
-end_extend:
+        if (h > tlen) {
+            int elems_to_remove = eq_elements - (bases_to_cmp - (h - tlen));
+            acc -= elems_to_remove;
+        }
+        */
 
         offsets[k] += acc;
     }

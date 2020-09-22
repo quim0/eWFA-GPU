@@ -1,6 +1,6 @@
 CC=nvcc
 SRC=main.cu utils.cu wavefront.cu kernels.cu
-ARGS=-gencode arch=compute_75,code=sm_75 -default-stream per-thread
+ARGS=-gencode arch=compute_70,code=sm_70 -default-stream per-thread
 
 all:
 	$(CC) $(SRC) $(ARGS) -O3 -o wfa.edit.distance.gpu
