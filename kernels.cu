@@ -53,18 +53,19 @@ __device__ void WF_extend_kernel (const WF_element element,
         int acc = 0;
         // Compare 16 bases at once
         while (v < plen && h < tlen) {
-            int real_v = v / 16;
-            int real_h = h / 16;
+            // Which byte to pick
+            int real_v = v / 4;
+            int real_h = h / 4;
 
-            int pattern_displacement = v % 16;
-            int text_displacement = h % 16;
+            // Get the displacement inside the aligned word
+            int pattern_displacement = v % bases_to_cmp;
+            int text_displacement = h % bases_to_cmp;
 
             // 0xffffffffffffff00
-            //uintptr_t alignment_mask = (uintptr_t)-1 << 2;
-            //uint32_t* word_p_ptr = (uint32_t*)((uintptr_t)(pattern + real_v) & alignment_mask);
-            uint32_t* word_p_ptr = (uint32_t*)(pattern + real_v);
+            uintptr_t alignment_mask = (uintptr_t)-1 << 2;
+            uint32_t* word_p_ptr = (uint32_t*)((uintptr_t)(pattern + real_v) & alignment_mask);
             uint32_t* next_word_p_ptr = word_p_ptr + 1;
-            uint32_t* word_t_ptr = (uint32_t*)(text + real_h);
+            uint32_t* word_t_ptr = (uint32_t*)((uintptr_t)(text + real_h) & alignment_mask);
             uint32_t* next_word_t_ptr = word_t_ptr + 1;
 
             // * 2 because each element is 2 bits
@@ -87,8 +88,8 @@ __device__ void WF_extend_kernel (const WF_element element,
             uint32_t word_p = sub_word_p_1 | sub_word_p_2;
             uint32_t word_t = sub_word_t_1 | sub_word_t_2;
 
-//if (tid==0 && blockIdx.x == 0 && k == 2)
-//	printf("v: %d, h:%d, word_1: %x, word 2: %x, sub_w1: %x, sub_w2: %x, word_p: %x\n", v, h, *word_p_ptr, *next_word_p_ptr, sub_word_p_1, sub_word_p_2, word_p);
+if (tid==0 && blockIdx.x == 0 && k == 2)
+	printf("v: %d, h:%d, word_1: %x, word 2: %x, sub_w1: %x, sub_w2: %x, word_p: %x\n", v, h, *word_p_ptr, *next_word_p_ptr, sub_word_p_1, sub_word_p_2, word_p);
 
             uint32_t diff = word_p ^ word_t;
             // Branchless method to remove the equal bits if we read "too far away"
@@ -100,6 +101,8 @@ __device__ void WF_extend_kernel (const WF_element element,
                 full_mask << ((next_v - plen) * 2) : full_mask;
             uint32_t mask_t = (next_h > tlen) ?
                 full_mask << ((next_h - tlen) * 2) : full_mask;
+            //if (mask_p != full_mask || mask_t != full_mask)
+            //    printf("not full mask! v: %d, h: %d mask_p: 0x%x, mask_t: 0x%x\n", v, h, mask_p, mask_t);
             diff = diff  | ~mask_p | ~mask_t;
 
             int lz = __clz(diff);
@@ -107,12 +110,6 @@ __device__ void WF_extend_kernel (const WF_element element,
             // each element has 2 bits
             eq_elements = lz / 2;
             acc += eq_elements;
-
-            if (tid==0 && blockIdx.x == 0 && eq_elements != 0) {
-                printf("eq_elements: %d, diff: %x\n", eq_elements, diff);
-                printf("(ptr: %p) v: %d, h:%d, word_1: %x, word 2: %x, sub_w1: %x, sub_w2: %x, word_p: %x\n", word_p_ptr, v, h, *word_p_ptr, *next_word_p_ptr, sub_word_p_1, sub_word_p_2, word_p);
-                printf("(ptr: %p) real_v: %d, real_h:%d, word_1: %x, word 2: %x, sub_w1: %x, sub_w2: %x, word_t: %x\n", word_t_ptr, real_v, real_h, *word_t_ptr, *next_word_t_ptr, sub_word_t_1, sub_word_t_2, word_t);
-            }
 
             if (eq_elements < bases_to_cmp) {
                 break;
