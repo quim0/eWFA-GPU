@@ -118,21 +118,6 @@ __device__ void WF_extend_kernel (const WF_element element,
             h += bases_to_cmp;
         }
 
-        /*
-        // Check if it has gone too far... And remove the appropiate "false
-        // matchs"
-        if (v > plen) {
-            // if (eq_elements > (v-plen)) acc -= elems_to_remove ?????
-            int elems_to_remove = eq_elements - (bases_to_cmp - (v - plen));
-            acc -= elems_to_remove;
-        }
-
-        if (h > tlen) {
-            int elems_to_remove = eq_elements - (bases_to_cmp - (h - tlen));
-            acc -= elems_to_remove;
-        }
-        */
-
         offsets[k] += acc;
     }
     __syncthreads();
@@ -292,14 +277,6 @@ __global__ void WF_edit_distance (const WF_element* elements,
             // TODO
             printf("Max distance reached!!!\n");
         }
-        char tmp = text[text_len];
-        text[text_len] = '\0';
-        printf("TEXT: %s\n", text);
-        text[text_len] = tmp;
-        tmp = pattern[pattern_len];
-        pattern[pattern_len] = '\0';
-        printf("PATTERN: %s\n", pattern);
-        pattern[pattern_len] = tmp;
         printf("Distance: %d\n", distance);
     }
 #endif
