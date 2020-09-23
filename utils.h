@@ -66,7 +66,9 @@ public:
         this->max_seq_len = ((seq_len / 4) + (seq_len % 4)) * 2;
         // Make sure sequences are 32 bits aligned
         // TODO: CHECK THIS!
-        this->max_seq_len = this->max_seq_len + (this->max_seq_len % 4);
+        this->max_seq_len += (this->max_seq_len % 4);
+        // Add extra 32 bits just to make sure, is this necessary? Nobody knows
+        this->max_seq_len += 4;
         DEBUG("SequenceReader created:\n"
               "    File: %s\n"
               "    Sequence avg length: %zu\n"

@@ -69,7 +69,11 @@ __device__ void WF_extend_kernel (const WF_element element,
             uint32_t* next_word_t_ptr = word_t_ptr + 1;
 
             // * 2 because each element is 2 bits
-            uint32_t sub_word_p_1 = (*word_p_ptr) << (pattern_displacement * 2);
+            uint32_t sub_word_p_1 = __byte_perm(*word_p_ptr, 0, 0x0123);
+            sub_word_p_1 = sub_word_p_1 << (pattern_displacement * 2);
+            // Convert the u32 to big-endian, as little endian inverts the order
+            // for the sequences.
+            uint32_t sub_word_p_2 = __byte_perm(*next_word_p_ptr, 0, 0x123);
             // Cast to uint64_t is done to avoid undefined behaviour in case
             // it's shifted by 32 elements.
             // ----
@@ -78,18 +82,17 @@ __device__ void WF_extend_kernel (const WF_element element,
             // greater than or equal to the length in bits of the promoted left
             // operand.
             // ----
-            uint32_t sub_word_p_2 = ((uint64_t)*(next_word_p_ptr)) >>
+            sub_word_p_2 = ((uint64_t)sub_word_p_2) >>
                 ((bases_to_cmp - pattern_displacement) * 2);
 
-            uint32_t sub_word_t_1 = (*word_t_ptr) << (text_displacement * 2);
-            uint32_t sub_word_t_2 = ((uint64_t)*next_word_t_ptr) >>
+            uint32_t sub_word_t_1 = __byte_perm(*word_t_ptr, 0, 0x123);
+            sub_word_t_1 = sub_word_t_1 << (text_displacement * 2);
+            uint32_t sub_word_t_2 = __byte_perm(*next_word_t_ptr, 0, 0x123);
+            sub_word_t_2 = ((uint64_t)sub_word_t_2) >>
                 ((bases_to_cmp - text_displacement) * 2);
 
             uint32_t word_p = sub_word_p_1 | sub_word_p_2;
             uint32_t word_t = sub_word_t_1 | sub_word_t_2;
-
-if (tid==0 && blockIdx.x == 0 && k == 2)
-	printf("v: %d, h:%d, word_1: %x, word 2: %x, sub_w1: %x, sub_w2: %x, word_p: %x\n", v, h, *word_p_ptr, *next_word_p_ptr, sub_word_p_1, sub_word_p_2, word_p);
 
             uint32_t diff = word_p ^ word_t;
             // Branchless method to remove the equal bits if we read "too far away"
@@ -101,8 +104,6 @@ if (tid==0 && blockIdx.x == 0 && k == 2)
                 full_mask << ((next_v - plen) * 2) : full_mask;
             uint32_t mask_t = (next_h > tlen) ?
                 full_mask << ((next_h - tlen) * 2) : full_mask;
-            //if (mask_p != full_mask || mask_t != full_mask)
-            //    printf("not full mask! v: %d, h: %d mask_p: 0x%x, mask_t: 0x%x\n", v, h, mask_p, mask_t);
             diff = diff  | ~mask_p | ~mask_t;
 
             int lz = __clz(diff);
