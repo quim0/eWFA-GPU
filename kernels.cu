@@ -100,10 +100,8 @@ __device__ void WF_extend_kernel (const WF_element element,
             uint32_t full_mask = (uint32_t)-1;
             int next_v = v + bases_to_cmp;
             int next_h = h + bases_to_cmp;
-            uint32_t mask_p = (next_v > plen) ?
-                full_mask << ((next_v - plen) * 2) : full_mask;
-            uint32_t mask_t = (next_h > tlen) ?
-                full_mask << ((next_h - tlen) * 2) : full_mask;
+            uint32_t mask_p = full_mask << ((next_v - plen) * 2 * (next_v > plen));
+            uint32_t mask_t = full_mask << ((next_h - tlen) * 2 * (next_h > tlen));
             diff = diff  | ~mask_p | ~mask_t;
 
             int lz = __clz(diff);
