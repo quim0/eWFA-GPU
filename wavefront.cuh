@@ -175,7 +175,7 @@ public:
                     curr_off_value++;
                     break;
                 default:
-                    DEBUG("Incorrect operation found: %lu", op);
+                    DEBUG("Incorrect operation found at %d: %lu", d, op);
                     WF_FATAL("Invalid packed value in backtrace\n");
             }
             cigar_ascii++;
