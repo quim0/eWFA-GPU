@@ -172,9 +172,6 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
         next_offsets[k] = res;
     }
 
-    // TODO: Is this necessary? It's already updated in the loop
-    if (tid == 0)
-        next_wavefronts->d = wavefronts->d + 1;
     __syncthreads();
 }
 
@@ -215,10 +212,10 @@ __global__ void WF_edit_distance (const WF_element* elements,
 
     // + max_distance to center the offsets, +1 to avoid loop peeling in the
     // compute function
-    edit_wavefronts_t wavefronts_obj =
-                 {.d = 0, .offsets = shared_offsets + max_distance + 1};
-    edit_wavefronts_t next_wavefronts_obj =
-                 {.d = 0, .offsets = shared_next_offsets + max_distance + 1};
+    __shared__ edit_wavefronts_t wavefronts_obj;
+    wavefronts_obj = {.d = 0, .offsets = shared_offsets + max_distance + 1};
+    __shared__ edit_wavefronts_t next_wavefronts_obj;
+    next_wavefronts_obj = {.d = 0, .offsets = shared_next_offsets + max_distance + 1};
 
     // Use pointers to be able to swap them efficiently
     edit_wavefronts_t* wavefronts = &wavefronts_obj;
@@ -272,6 +269,7 @@ __global__ void WF_edit_distance (const WF_element* elements,
 
         // Compare against next_offsets becuse the extend updates that
         if (target_k_abs <= distance && next_wavefronts->offsets[target_k] == target_offset) {
+            wavefronts->d++;
             break;
         }
 
