@@ -56,12 +56,15 @@ __device__ ewf_offset_t WF_extend_kernel (const WF_element element,
         uint32_t* word_t_ptr = (uint32_t*)((uintptr_t)(text + real_h) & alignment_mask);
         uint32_t* next_word_t_ptr = word_t_ptr + 1;
 
+
         // * 2 because each element is 2 bits
-        uint32_t sub_word_p_1 = __byte_perm(*word_p_ptr, 0, 0x0123);
+        //uint32_t sub_word_p_1 = __byte_perm(*word_p_ptr, 0, 0x0123);
+        uint32_t sub_word_p_1 = *word_p_ptr;
+        uint32_t sub_word_p_2 = *next_word_p_ptr;
         sub_word_p_1 = sub_word_p_1 << (pattern_displacement * 2);
         // Convert the u32 to big-endian, as little endian inverts the order
         // for the sequences.
-        uint32_t sub_word_p_2 = __byte_perm(*next_word_p_ptr, 0, 0x123);
+        sub_word_p_2 = *next_word_p_ptr;
         // Cast to uint64_t is done to avoid undefined behaviour in case
         // it's shifted by 32 elements.
         // ----
@@ -73,9 +76,9 @@ __device__ ewf_offset_t WF_extend_kernel (const WF_element element,
         sub_word_p_2 = ((uint64_t)sub_word_p_2) >>
             ((bases_to_cmp - pattern_displacement) * 2);
 
-        uint32_t sub_word_t_1 = __byte_perm(*word_t_ptr, 0, 0x123);
+        uint32_t sub_word_t_1 = *word_t_ptr;
         sub_word_t_1 = sub_word_t_1 << (text_displacement * 2);
-        uint32_t sub_word_t_2 = __byte_perm(*next_word_t_ptr, 0, 0x123);
+        uint32_t sub_word_t_2 = *next_word_t_ptr;
         sub_word_t_2 = ((uint64_t)sub_word_t_2) >>
             ((bases_to_cmp - text_displacement) * 2);
 
@@ -90,7 +93,7 @@ __device__ ewf_offset_t WF_extend_kernel (const WF_element element,
         int next_h = h + bases_to_cmp;
         uint32_t mask_p = full_mask << ((next_v - plen) * 2 * (next_v > plen));
         uint32_t mask_t = full_mask << ((next_h - tlen) * 2 * (next_h > tlen));
-        diff = diff  | ~mask_p | ~mask_t;
+        diff = diff | ~mask_p | ~mask_t;
 
         int lz = __clz(diff);
 
@@ -127,7 +130,7 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
     const int hi = wavefronts->d;
     const int lo = -wavefronts->d;
 
-    for(int k = lo + tid - 1; k <= hi + 1; k += tnum) {
+    for(int k = lo + tid; k <= hi; k += tnum) {
         // Load the three necesary values on registers
         const ewf_offset_t off_k = offsets[k];
         const ewf_offset_t off_k_up = offsets[k + 1];
@@ -156,8 +159,8 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
         WF_backtrace_t* prev_bt = &backtraces[k + (op - 2)];
 
         // set in next_backtraces the correct operation
-        // use d - 1 because operation 0 means distance 1
-        int curr_d = wavefronts->d;
+        // -1 because operation 0 is at distance 1
+        int curr_d = wavefronts->d - 1;
         int word = curr_d / 32;
         curr_bt->words[0] = prev_bt->words[0];
         curr_bt->words[1] = prev_bt->words[1];
@@ -166,7 +169,6 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
         const ewf_offset_t res = WF_extend_kernel(
                  element, wavefronts, text, pattern,
                  tlen, plen, k, next_off_k);
-
         next_offsets[k] = res;
     }
 
@@ -239,18 +241,28 @@ __global__ void WF_edit_distance (const WF_element* elements,
     WF_backtrace_t* next_backtraces = next_backtraces_shared + max_distance;
 
     // The first offsets must be 0, not -1
-    if (tid == 0)
-        wavefronts->offsets[0] = 0;
+    // TODO: This is not neede because of the initial extend?
+    //if (tid == 0)
+    //    wavefronts->offsets[0] = 0;
 
-    __syncthreads();
+    //__syncthreads();
 
     const int target_k = EWAVEFRONT_DIAGONAL(text_len, pattern_len);
     const int target_k_abs = (target_k >= 0) ? target_k : -target_k;
     const ewf_offset_t target_offset = EWAVEFRONT_OFFSET(text_len, pattern_len);
-    int distance = 0;
 
+    int distance = 0;
     wavefronts->d = distance;
-    for (distance = 0; distance < max_distance; distance++) {
+
+    if (tid == 0) {
+        ewf_offset_t res = WF_extend_kernel(element, wavefronts, text, pattern,
+                                            text_len, pattern_len, 0, 0);
+        wavefronts->offsets[0] = res;
+    }
+
+    __syncthreads();
+
+    for (distance = 1; distance < max_distance; distance++) {
         wavefronts->d = distance;
         // Computes does compute + extend per diagonal
         // TODO: Change function name
@@ -258,7 +270,8 @@ __global__ void WF_edit_distance (const WF_element* elements,
                   next_backtraces, element, shared_text, shared_pattern,
                   text_len, pattern_len);
 
-        if (target_k_abs <= distance && wavefronts->offsets[target_k] == target_offset) {
+        // Compare against next_offsets becuse the extend updates that
+        if (target_k_abs <= distance && next_wavefronts->offsets[target_k] == target_offset) {
             break;
         }
 
@@ -275,8 +288,9 @@ __global__ void WF_edit_distance (const WF_element* elements,
 
     WF_backtrace_result_t *curr_res = cigars.get_backtraces(blockIdx.x);
     curr_res->distance = distance;
-    curr_res->words[0] = backtraces[target_k].words[0];
-    curr_res->words[1] = backtraces[target_k].words[1];
+    // TODO: Check if it's in next_backtraces for all cases. It should be
+    curr_res->words[0] = next_backtraces[target_k].words[0];
+    curr_res->words[1] = next_backtraces[target_k].words[1];
 
 #ifdef DEBUG_MODE
     if (blockIdx.x == 0 && tid == 0) {

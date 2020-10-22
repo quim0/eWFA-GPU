@@ -151,6 +151,17 @@ void SequenceReader::pack_sequence (uint8_t* curr_seq_ptr, SEQ_TYPE* seq_buf, si
 
         curr_seq_ptr[byte_idx] |= (uint8_t)curr_seq_elem << shl;
     }
+
+    // Terrible way to convert the packed sequences to little endian. Sequences
+    // are 32 bits aligned.
+    for (int i=0; i<max_seq_len; i += 4) {
+        uint32_t val = //*((uint32_t*)curr_seq_ptr + (i/4));
+            (curr_seq_ptr[i] << 24) |
+            (curr_seq_ptr[i + 1] << 16)  |
+            (curr_seq_ptr[i + 2] << 8) |
+            curr_seq_ptr[i + 3];
+        *((uint32_t*)curr_seq_ptr + (i/4)) = val;
+    }
 }
 
 bool SequenceReader::read_n_alignments (int n) {

@@ -138,7 +138,7 @@ bool Sequences::GPU_prepare_memory_next_batch () {
 
 void Sequences::GPU_launch_wavefront_distance () {
     // TODO: Determine better the number of threads
-    int threads_x = 32;
+    int threads_x = 64;
 
     int blocks_x;
     // Check if the current batch is smaller than "batch_size"

@@ -25,6 +25,7 @@
 #include <cuda.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include "cuda_helpers.cuh"
 #include "wavefront_structures.h"
 #include "logger.h"
@@ -207,12 +208,27 @@ public:
         // WF_sequence_element_t
         const char elems_lut[4] = {'A', 'G', 'C', 'T'};
 
-        for (int i=0; i<len; i++) {
-            int byte_idx = i / 4;
-            int shr = (3 - (i % 4)) * 2;
-            WF_sequence_element_t curr_elem =
-                (WF_sequence_element_t)((seq_packed[byte_idx] >> shr) & 0x3);
-            ascii_seq_buf[i] = elems_lut[curr_elem];
+        // 16 --> bases in 32 bits
+        for (int i=0; i<ceil((double)len/16); i++) {
+            uint32_t val = *((uint32_t*)seq_packed + i);
+            // Change order because of little endian encoding
+            uint32_t bytes[4] = {
+                (val & 0xff000000) >> 24,
+                (val & 0xff0000) >> 16,
+                (val & 0xff00) >> 8,
+                val & 0xff,
+            };
+            for (int j=0; j<4; j++) {
+                for (int k=0; k<4; k++) {
+                    int idx = i*16 + j*4 + k;
+                    if (idx >= len) break;
+                    uint8_t byte = bytes[j];
+                    int shr = (3 - k) * 2;
+                    WF_sequence_element_t curr_elem =
+                        (WF_sequence_element_t)((byte >> shr) & 0x3);
+                    ascii_seq_buf[idx] = elems_lut[curr_elem];
+                }
+            }
         }
         return ascii_seq_buf;
     }
