@@ -58,7 +58,6 @@ __device__ ewf_offset_t WF_extend_kernel (const WF_element element,
 
 
         // * 2 because each element is 2 bits
-        //uint32_t sub_word_p_1 = __byte_perm(*word_p_ptr, 0, 0x0123);
         uint32_t sub_word_p_1 = *word_p_ptr;
         uint32_t sub_word_p_2 = *next_word_p_ptr;
         sub_word_p_1 = sub_word_p_1 << (pattern_displacement * 2);
@@ -236,13 +235,6 @@ __global__ void WF_edit_distance (const WF_element* elements,
     // centering the array
     WF_backtrace_t* backtraces = backtraces_shared + max_distance;
     WF_backtrace_t* next_backtraces = next_backtraces_shared + max_distance;
-
-    // The first offsets must be 0, not -1
-    // TODO: This is not neede because of the initial extend?
-    //if (tid == 0)
-    //    wavefronts->offsets[0] = 0;
-
-    //__syncthreads();
 
     const int target_k = EWAVEFRONT_DIAGONAL(text_len, pattern_len);
     const int target_k_abs = (target_k >= 0) ? target_k : -target_k;
