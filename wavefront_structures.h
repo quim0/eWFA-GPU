@@ -70,14 +70,16 @@ typedef enum {
     OP_INS = 1   // k - 1, "going down" 0b01
 } WF_backtrace_op_t;
 
-// Encode sequence elements in two bytes
+// Encode sequence elements in two bytes, this is the bits [2:1] of the ASCII
+// representation of the bases. So it can be obtained by doing (base & 6) >> 1
+// Note that 6 is 0b110
 // WARNING: Before changing this make sure is coherent with the translation
 // array in generate_ascii_sequence(...) (wavefront.cuh)
 typedef enum {
     A, // 00
-    G, // 01
-    C, // 10
-    T  // 11
+    C, // 01
+    T, // 10
+    G  // 11
 } WF_sequence_element_t;
 
 #endif

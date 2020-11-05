@@ -208,7 +208,7 @@ public:
 
         // WARNING: Before changing this make sure is coherent with
         // WF_sequence_element_t
-        const char elems_lut[4] = {'A', 'G', 'C', 'T'};
+        const char elems_lut[4] = {'A', 'C', 'T', 'G'};
 
         // 16 --> bases in 32 bits
         for (int i=0; i<ceil((double)len/16); i++) {

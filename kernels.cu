@@ -334,29 +334,8 @@ __global__ void compact_sequences(const SEQ_TYPE* const sequences_in,
 
         uint8_t packed_reg = 0;
         for (int j=0; j<4; j++) {
-            WF_sequence_element_t curr_elem;
-            // TODO: see if the compiler is capable to create a lut or avoid
-            // diergence in some way.
-            switch (bases_arr[j]) {
-                case 'A':
-                    curr_elem = A;
-                    break;
-                case 'G':
-                    curr_elem = G;
-                    break;
-                case 'C':
-                    curr_elem = C;
-                    break;
-                case 'T':
-                    curr_elem = T;
-                    break;
-                case '\n':
-                case 0:
-                    break;
-                default:
-                    printf("Invalid character in input sequence.\n");
-            }
-            // Save the values in reverse order (little endian)
+            WF_sequence_element_t curr_elem = (WF_sequence_element_t)
+                                                    ((bases_arr[j] & 6) >> 1);
             packed_reg |= ((uint8_t)curr_elem << (j * 2));
         }
 
