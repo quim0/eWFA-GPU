@@ -36,6 +36,7 @@ public:
     size_t seq_len;
     // Maximum sequence length if error rate is 100%
     size_t max_seq_len;
+    size_t max_seq_len_unpacked;
     // Number of sequences pairs in the "sequences" list and in the file
     size_t num_alignments;
 
@@ -43,7 +44,7 @@ public:
     // Chunk of memory where all the sequences will be stored, the final
     // nullbytes doesn't need to be stored as we already know the sequence
     // length.
-    SEQ_TYPE* sequences_mem;
+    SEQ_TYPE* sequences_mem_unpacked;
 
     size_t batch_size;
     int num_sequences_read;
@@ -58,9 +59,12 @@ public:
                                               num_alignments(num_alignments), \
                                               batch_size(batch_size),       \
                                               sequences(NULL),              \
-                                              sequences_mem(NULL),       \
+                                              sequences_mem_unpacked(NULL), \
                                               fp(NULL),                     \
                                               num_sequences_read(0) {
+        // Allow 100% of error rate, make sure it is 32 bits aligned
+        this->max_seq_len_unpacked = seq_len * 2;
+        this->max_seq_len_unpacked += (this->max_seq_len_unpacked % 4);
         // Max sequence length in bytes, encoding the sequence elements in 2
         // bits (4 elements per byte)
         this->max_seq_len = ((seq_len / 4) + (seq_len % 4)) * 2;
@@ -78,20 +82,19 @@ public:
     bool skip_n_alignments (int n);
     bool read_n_alignments (int n);
     bool read_batch_alignments () {
-        memset(this->get_sequences_buffer(), 0, this->max_seq_len * 2 * this->batch_size);
         return read_n_alignments(this->batch_size);
     }
     bool read_file () {
         return read_n_alignments(this->num_alignments);
     }
-    SEQ_TYPE* get_sequences_buffer ();
+    SEQ_TYPE* get_sequences_buffer_unpacked ();
     size_t sequences_buffer_size () const;
     void destroy ();
 
 private:
     void initialize_sequences ();
     size_t sequence_buffer_size ();
-    void create_sequences_buffer ();
+    void create_sequences_buffer_unpacked ();
     SEQ_TYPE* create_sequence_buffer ();
     void pack_sequence (uint8_t* curr_seq_ptr, SEQ_TYPE* seq_buf, size_t buf_len);
 };

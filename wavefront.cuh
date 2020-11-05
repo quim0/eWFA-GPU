@@ -54,6 +54,8 @@ public:
                   this->cigars_results_size() / (1 << 20));
             cudaMalloc((void**) &(this->data), this->cigars_results_size());
             CUDA_CHECK_ERR
+            cudaMemset(this->data, 0, this->cigars_results_size());
+            CUDA_CHECK_ERR
         }
         else {
             cudaMallocHost((void**)&this->data, this->cigars_results_size());
@@ -237,13 +239,10 @@ public:
                                const SEQ_TYPE* seq_base_ptr,
                                const size_t max_seq_len) {
         int text_pos = 0, pattern_pos = 0;
-        SEQ_TYPE* text_packed  = TEXT_PTR(element.alignment_idx, seq_base_ptr,
+        SEQ_TYPE* text = TEXT_PTR(element.alignment_idx, seq_base_ptr,
                                   max_seq_len);
-        SEQ_TYPE* pattern_packed = PATTERN_PTR(element.alignment_idx, seq_base_ptr,
+        SEQ_TYPE* pattern= PATTERN_PTR(element.alignment_idx, seq_base_ptr,
                                         max_seq_len);
-
-        SEQ_TYPE* text = generate_ascii_sequence(text_packed, element.tlen);
-        SEQ_TYPE* pattern = generate_ascii_sequence(pattern_packed, element.plen);
 
         const edit_cigar_t* curr_cigar = this->generate_ascii_cigar(n,
                                                         text,
@@ -268,8 +267,6 @@ public:
                               " (pattern[%d] = %c != text[%d] = %c)",
                               i, pattern_pos, pattern[pattern_pos],
                               text_pos, text[text_pos]);
-                        free(text);
-                        free(pattern);
                         return false;
                     }
                     ++pattern_pos;
@@ -287,8 +284,6 @@ public:
                               " (pattern[%d] = %c == text[%d] = %c)",
                               i, pattern_pos, pattern[pattern_pos],
                               text_pos, text[text_pos]);
-                        free(text);
-                        free(pattern);
                         return false;
                     }
                     ++pattern_pos;
@@ -305,21 +300,15 @@ public:
                   "pattern-length: %zu. (n: %d)", pattern_pos, element.plen, n);
             DEBUG("TEXT: %s", text);
             DEBUG("PATTERN: %s", pattern);
-            free(text);
-            free(pattern);
             return false;
         }
 
         if (text_pos != element.tlen) {
             DEBUG("Alignment incorrect length, text-aligned: %d, "
                   "text-length: %zu", text_pos, element.tlen);
-            free(text);
-            free(pattern);
             return false;
         }
 
-        free(text);
-        free(pattern);
         return true;
     }
 private:
@@ -395,6 +384,7 @@ private:
     bool CPU_read_next_sequences ();
     bool GPU_prepare_memory_next_batch ();
     SEQ_TYPE* sequences_device_ptr;
+    SEQ_TYPE* sequences_device_ptr_unpacked;
 };
 
 #endif // Header guard WAVEFRONT_H

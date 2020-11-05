@@ -69,30 +69,31 @@ bool SequenceReader::skip_n_alignments (int n) {
 }
 
 // Allocate space for the sequences of the whole file
-void SequenceReader::create_sequences_buffer () {
+void SequenceReader::create_sequences_buffer_unpacked () {
     // As now we read the whole file, if it's large it'll be difficult to find a
     // phisycal contiguous memory space of e.g 20GiB (for 5M alignments of 1K
     // sequence length)
     // TODO: Allocate exactly the size of the file to save memory ??
-    size_t bytes_to_alloc = this->num_alignments * this->max_seq_len * 2 * sizeof(SEQ_TYPE);
-    DEBUG("Trying to allocate %zu MiB to store the sequences.",
+    size_t bytes_to_alloc = this->num_alignments * this->max_seq_len_unpacked * 2 * sizeof(SEQ_TYPE);
+    DEBUG("Trying to allocate %zu MiB to store the unpacked sequences.",
           bytes_to_alloc / (1 << 20));
-    cudaMallocHost((void**)&this->sequences_mem, bytes_to_alloc);
+    cudaMallocHost((void**)&this->sequences_mem_unpacked, bytes_to_alloc);
     //this->sequences_mem = (SEQ_TYPE*)calloc(bytes_to_alloc, 1);
-    if (!this->sequences_mem)
+    if (!this->sequences_mem_unpacked)
         WF_FATAL(NOMEM_ERR_STR);
+    memset(this->sequences_mem_unpacked, 0, bytes_to_alloc);
     DEBUG("Allocated %zu MiB to store the sequences.",
           bytes_to_alloc / (1 << 20));
 }
 
-SEQ_TYPE* SequenceReader::get_sequences_buffer () {
+SEQ_TYPE* SequenceReader::get_sequences_buffer_unpacked () {
     // Big chunk of memory where all the sequences will be stored
     // The final nullbyte WILL NOT be stored as we already know the maximum
     // sequence size.
-    if (this->sequences_mem == NULL) {
-        this->create_sequences_buffer();
+    if (this->sequences_mem_unpacked == NULL) {
+        this->create_sequences_buffer_unpacked();
     }
-    return this->sequences_mem;
+    return this->sequences_mem_unpacked;
 }
 
 SEQ_TYPE* SequenceReader::create_sequence_buffer () {
@@ -102,65 +103,6 @@ SEQ_TYPE* SequenceReader::create_sequence_buffer () {
         WF_FATAL(NOMEM_ERR_STR);
     }
     return buf;
-}
-
-/*
-This functions packs the sequences, that are encoded as 1 byte per element in
-the input file, as there can only be 4 different element values (A, G, C, T), it
-can be stoed in 2 bits per element.
-
-Sequences are packed in "big endian" style, more significant bits contains lower
-positions of the sequences. This is equivalent to "reading" the bytes right to
-left. This is done because in current nvidia cards there's "clz" instructions
-but no "ctz".
-
-                      Byte 0       Byte 1
-Packed sequences: [00 01 11 01] [11 10 01 01]
-Element position:  0  1  2  3    4  5  6  7
-*/
-void SequenceReader::pack_sequence (uint8_t* curr_seq_ptr, SEQ_TYPE* seq_buf, size_t buf_len) {
-    // Skip the initial < or >
-    seq_buf++;
-    buf_len--;
-    for (int i=0; i<buf_len; i++) {
-        WF_sequence_element_t curr_seq_elem;
-        switch (seq_buf[i]) {
-            case 'A':
-                curr_seq_elem = A;
-                break;
-            case 'G':
-                curr_seq_elem = G;
-                break;
-            case 'C':
-                curr_seq_elem = C;
-                break;
-            case 'T':
-                curr_seq_elem = T;
-                break;
-            case '\n':
-                continue;
-            default:
-                WF_FATAL("Invalid character in input sequence.")
-        }
-
-        // i mod 4, as there's space for 4 elements per byte, *2 because
-        // there're two bits per element. "3 -"  to make lower positions of the
-        // sequences go to the more significant bits.
-        int shl = (3 - (i % 4)) * 2;
-        int byte_idx = i / 4;
-
-        curr_seq_ptr[byte_idx] |= (uint8_t)curr_seq_elem << shl;
-    }
-
-    // Terrible way to convert the packed sequences to little endian. Sequences
-    // are 32 bits aligned.
-    for (int i=0; i<max_seq_len; i += 4) {
-        uint32_t val = (curr_seq_ptr[i] << 24)
-                       | (curr_seq_ptr[i + 1] << 16)
-                       | (curr_seq_ptr[i + 2] << 8)
-                       | curr_seq_ptr[i + 3];
-        *((uint32_t*)curr_seq_ptr + (i/4)) = val;
-    }
 }
 
 bool SequenceReader::read_n_alignments (int n) {
@@ -193,7 +135,7 @@ bool SequenceReader::read_n_alignments (int n) {
 
     bool retval = true;
 
-    SEQ_TYPE* seq_buffer = this->get_sequences_buffer();
+    SEQ_TYPE* seq_buffer = this->get_sequences_buffer_unpacked();
 
     uint32_t idx = 0;
     int alignment_idx = 0;
@@ -207,7 +149,7 @@ bool SequenceReader::read_n_alignments (int n) {
         WF_element *curr_elem = &(this->sequences[alignment_idx]);
         // Pointer where the current sequence will be allocated in the big
         // memory chunck
-        SEQ_TYPE* curr_seq_ptr = seq_buffer + idx * this->max_seq_len;
+        SEQ_TYPE* curr_seq_ptr = seq_buffer + idx * this->max_seq_len_unpacked;
 
         if (elem_idx == 0) {
             // First element of the sequence (PATTERN)
@@ -218,7 +160,10 @@ bool SequenceReader::read_n_alignments (int n) {
                 retval = false;
                 break;
             }
-            pack_sequence((uint8_t*)curr_seq_ptr, buf, length);
+            // Advance one position in buf to avoid the initial '>', remove two
+            // from the lenght to avoid the initial '>' and the newline at the
+            // end.
+            memcpy(curr_seq_ptr, buf + 1, length - 2);
             curr_elem->alignment_idx = alignment_idx;
             curr_elem->plen = length - 2; // -1 for the initial >, -1 for \n
         } else if (elem_idx == 1) {
@@ -230,7 +175,7 @@ bool SequenceReader::read_n_alignments (int n) {
                 retval = false;
                 break;
             }
-            pack_sequence((uint8_t*)curr_seq_ptr, buf, length);
+            memcpy(curr_seq_ptr, buf + 1, length - 2);
             curr_elem->tlen = length - 2; // -1 for <, -1 for \n
         }
 
@@ -247,7 +192,7 @@ bool SequenceReader::read_n_alignments (int n) {
 #ifdef DEBUG_MODE
     if (retval) {
         DEBUG("File read and sequences stored.\n"
-              "    First sequece: %.5s...", this->get_sequences_buffer());
+              "    First sequece: %.5s...", this->get_sequences_buffer_unpacked());
     } else
         DEBUG("There were some errors while processing the file.");
 #endif
@@ -256,8 +201,6 @@ bool SequenceReader::read_n_alignments (int n) {
 }
 
 void SequenceReader::destroy () {
-    cudaFree(sequences_mem);
-    this->sequences_mem = NULL;
+    cudaFree(sequences_mem_unpacked);
     free(sequences);
-    this->sequences = NULL;
 }
