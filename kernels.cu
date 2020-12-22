@@ -249,8 +249,6 @@ __global__ void WF_edit_distance (const WF_element* elements,
         wavefronts->offsets[0] = res;
     }
 
-    __syncthreads();
-
     for (distance = 1; distance < max_distance; distance++) {
         wavefronts->d = distance;
         // Computes does compute + extend per diagonal
