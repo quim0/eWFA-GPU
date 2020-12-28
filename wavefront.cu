@@ -86,7 +86,9 @@ bool Sequences::GPU_memory_init () {
     dim3 blockSize(min(this->sequences_reader.seq_len/4, 256L), 2);
     DEBUG("Lauching sequences packing kernel on GPU with grid(%d) and block(%d, %d).",
           gridSize.x, blockSize.x, blockSize.y);
-    compact_sequences<<<gridSize, blockSize>>>(
+    // Unpacked pattern+text in shared memory
+    int shmem_size = this->sequences_reader.max_seq_len_unpacked * 2;
+    compact_sequences<<<gridSize, blockSize, shmem_size>>>(
                                         this->sequences_device_ptr_unpacked,
                                         this->sequences_device_ptr,
                                         this->sequences_reader.max_seq_len_unpacked,

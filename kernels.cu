@@ -304,8 +304,6 @@ __global__ void compact_sequences(const SEQ_TYPE* const sequences_in,
     const SEQ_TYPE* text_unpacked = TEXT_PTR(alignment_idx, sequences_in,
                                              max_seq_len_unpacked);
 
-    const SEQ_TYPE* sequences_unpacked[2] = {pattern_unpacked, text_unpacked};
-    const SEQ_TYPE* sequence_unpacked = sequences_unpacked[threadIdx.y];
 
     // Get pointers of the packed sequences, to be computed
     uint8_t* const pattern_packed = (uint8_t*)PATTERN_PTR(alignment_idx,
@@ -317,25 +315,41 @@ __global__ void compact_sequences(const SEQ_TYPE* const sequences_in,
     uint8_t* const sequences_packed[2] = {pattern_packed, text_packed};
     uint8_t* const sequence_packed = sequences_packed[threadIdx.y];
 
+    // Size of pattern+text
+    extern __shared__ uint8_t sequences_sh[];
+
+    // threadIdx.y is 0 or 1, so one dimension copies the pattern and another
+    // one copies the text.
+    int offset = threadIdx.y * max_seq_len_unpacked;
+    for (int i=threadIdx.x; i<max_seq_len_unpacked; i += blockDim.x) {
+        sequences_sh[offset + i] = pattern_unpacked[offset + i];
+    }
+
+    const uint8_t* sequences_unpacked[2] = {sequences_sh,
+                                             sequences_sh + max_seq_len_unpacked};
+    const uint8_t* sequence_unpacked = sequences_unpacked[threadIdx.y];
+
+
     // Each thread packs 4 bytes into 1 byte.
     for (int i=threadIdx.x; i<max_seq_len_packed; i += blockDim.x) {
         uint32_t bases = *((uint32_t*)(sequence_unpacked + i*4));
         if (bases == 0)
             break;
 
-        const uint8_t base0 = bases & 0xff;
-        const uint8_t base1 = (bases & 0xff00) >> 8;
-        const uint8_t base2 = (bases & 0xff0000) >> 16;
-        const uint8_t base3 = (bases & 0xff000000) >> 24;
-        // Reverse the bases, because they are read in little endian
-        const uint8_t bases_arr[4] = {base3, base2, base1, base0};
+        // Extract bases SIMD like --> (base & 6) >> 1 for each element
+        bases = (bases & 0x06060606) >> 1;
 
-        uint8_t packed_reg = 0;
-        for (int j=0; j<4; j++) {
-            WF_sequence_element_t curr_elem = (WF_sequence_element_t)
-                                                    ((bases_arr[j] & 6) >> 1);
-            packed_reg |= ((uint8_t)curr_elem << (j * 2));
-        }
+        const uint8_t base0 = bases & 0xff;
+        const uint8_t base1 = (bases >> 8) & 0xff;
+        const uint8_t base2 = (bases >> 16) & 0xff;
+        const uint8_t base3 = (bases >> 24) & 0xff;
+        //const uint8_t bases_arr[4] = {base3, base2, base1, base0};
+
+        // Reverse the bases, because they are read in little endian
+        uint8_t packed_reg = base3;
+        packed_reg |= (base2 << 2);
+        packed_reg |= (base1 << 4);
+        packed_reg |= (base0 << 6);
 
         // Byte idx if we were packing the sequences in big endian
         const int be_idx = i;
