@@ -94,13 +94,14 @@ bool Sequences::GPU_memory_init () {
                                         this->sequences_reader.max_seq_len_unpacked,
                                         this->sequences_reader.max_seq_len);
 
-    cudaStreamSynchronize(0);
     CUDA_CHECK_ERR;
-    DEBUG("Sequences packed.");
 
-    cudaMemcpy(this->d_elements, &this->elements[this->initial_alignment],
-               this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(this->d_elements, &this->elements[this->initial_alignment],
+               this->batch_size * sizeof(WF_element), cudaMemcpyHostToDevice, 0);
     CUDA_CHECK_ERR;
+
+    cudaStreamSynchronize(0);
+    DEBUG("Sequences packed.");
 
 #ifdef DEBUG_MODE
     size_t total_memory  = req_memory + seq_size_bytes * 2 * this->batch_size;
@@ -171,12 +172,14 @@ bool Sequences::GPU_prepare_memory_next_batch () {
     // for the text.
     dim3 blockSize(min(this->sequences_reader.seq_len/4, 256L), 2);
     // Pack the sequences on GPU
-    compact_sequences<<<gridSize, blockSize, 0, this->HtD_stream>>>(
+    int shmem_size = this->sequences_reader.max_seq_len_unpacked * 2;
+    compact_sequences<<<gridSize, blockSize, shmem_size, this->HtD_stream>>>(
                                         this->sequences_device_ptr_unpacked,
                                         this->sequences_device_ptr,
                                         this->sequences_reader.max_seq_len_unpacked,
                                         this->sequences_reader.max_seq_len);
 
+    CUDA_CHECK_ERR;
     // Send the new text_len and pattern_len to device
     cudaMemcpyAsync(this->d_elements, &this->elements[curr_position + initial_alignment],
                curr_batch_size * sizeof(WF_element), cudaMemcpyHostToDevice,
