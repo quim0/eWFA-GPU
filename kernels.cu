@@ -301,33 +301,31 @@ __global__ void compact_sequences(const SEQ_TYPE* const sequences_in,
     // Get pointers of the ASCII sequences
     const SEQ_TYPE* pattern_unpacked = PATTERN_PTR(alignment_idx, sequences_in,
                                                    max_seq_len_unpacked);
-    const SEQ_TYPE* text_unpacked = TEXT_PTR(alignment_idx, sequences_in,
-                                             max_seq_len_unpacked);
-
 
     // Get pointers of the packed sequences, to be computed
     uint8_t* const pattern_packed = (uint8_t*)PATTERN_PTR(alignment_idx,
                                                    sequences_out,
                                                    max_seq_len_packed);
-    uint8_t* const text_packed = (uint8_t*)TEXT_PTR(alignment_idx,
-                                             sequences_out,
-                                             max_seq_len_packed);
-    uint8_t* const sequences_packed[2] = {pattern_packed, text_packed};
-    uint8_t* const sequence_packed = sequences_packed[threadIdx.y];
+    uint8_t* sequence_packed = pattern_packed;
+    if (threadIdx.y == 1) {
+        // use text instead of pattern
+        sequence_packed += max_seq_len_packed;
+    }
 
     // Size of pattern+text
     extern __shared__ uint8_t sequences_sh[];
 
-    // threadIdx.y is 0 or 1, so one dimension copies the pattern and another
-    // one copies the text.
-    int offset = threadIdx.y * max_seq_len_unpacked;
-    for (int i=threadIdx.x; i<max_seq_len_unpacked; i += blockDim.x) {
-        sequences_sh[offset + i] = pattern_unpacked[offset + i];
+    // Linearize thread ids to copy the text and pattern
+    int cpytid = threadIdx.y*blockDim.x + threadIdx.x;
+    for (int i=cpytid; i<(max_seq_len_packed*2); i += blockDim.x*blockDim.y) {
+        *(uint32_t*)(&sequences_sh[i*4]) = *(uint32_t*)(&pattern_unpacked[i*4]);
     }
 
-    const uint8_t* sequences_unpacked[2] = {sequences_sh,
-                                             sequences_sh + max_seq_len_unpacked};
-    const uint8_t* sequence_unpacked = sequences_unpacked[threadIdx.y];
+    uint8_t* sequence_unpacked = sequences_sh;
+    if (threadIdx.y == 1) {
+        // use text instead of pattern
+        sequence_unpacked += max_seq_len_unpacked;
+    }
 
 
     // Each thread packs 4 bytes into 1 byte.
@@ -343,7 +341,6 @@ __global__ void compact_sequences(const SEQ_TYPE* const sequences_in,
         const uint8_t base1 = (bases >> 8) & 0xff;
         const uint8_t base2 = (bases >> 16) & 0xff;
         const uint8_t base3 = (bases >> 24) & 0xff;
-        //const uint8_t bases_arr[4] = {base3, base2, base1, base0};
 
         // Reverse the bases, because they are read in little endian
         uint8_t packed_reg = base3;
@@ -354,15 +351,24 @@ __global__ void compact_sequences(const SEQ_TYPE* const sequences_in,
         // Byte idx if we were packing the sequences in big endian
         const int be_idx = i;
 
-        // Table with the little endian indexes
-        const int le_lut[4] = {
-            be_idx + (3 - (be_idx % 4)),
-            be_idx + (be_idx % 4),
-            be_idx - (3 - (be_idx % 4)),
-            be_idx - (be_idx % 4),
-        };
+        // Save to the correct by to be little endian encoded for 32bits ints
+        int le_byte_idx;
+        switch (be_idx % 4) {
+            case 0:
+                le_byte_idx = be_idx + (3 - (be_idx % 4));
+                break;
+            case 1:
+                le_byte_idx = be_idx + (be_idx % 4);
+                break;
+            case 2:
+                le_byte_idx = be_idx - (3 - (be_idx % 4));
+                break;
+            case 3:
+            default:
+                le_byte_idx = be_idx - (be_idx % 4);
+                break;
+        }
 
-        const int le_byte_idx = le_lut[be_idx % 4];
         sequence_packed[le_byte_idx] = packed_reg;
     }
 }
