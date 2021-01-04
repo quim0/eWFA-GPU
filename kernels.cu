@@ -26,7 +26,6 @@
 
 // Assumes 1 block per element
 __device__ ewf_offset_t WF_extend_kernel (const WF_element element,
-                                  edit_wavefronts_t* const wavefronts,
                                   const SEQ_TYPE* text,
                                   const SEQ_TYPE* pattern,
                                   const int tlen,
@@ -111,23 +110,21 @@ __device__ ewf_offset_t WF_extend_kernel (const WF_element element,
     return offset_k + acc;
 }
 
-__device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
-                                   edit_wavefronts_t* const next_wavefronts,
+__device__ void WF_compute_kernel (ewf_offset_t* const offsets,
+                                   ewf_offset_t* const next_offsets,
                                    WF_backtrace_t* const backtraces,
                                    WF_backtrace_t* const next_backtraces,
                                    const WF_element element,
                                    const SEQ_TYPE* text,
                                    const SEQ_TYPE* pattern,
                                    const int tlen,
-                                   const int plen) {
-    ewf_offset_t * const offsets = wavefronts->offsets;
-    ewf_offset_t * const next_offsets = next_wavefronts->offsets;
-
+                                   const int plen,
+                                   const int distance) {
     int tid = threadIdx.x;
     int tnum = blockDim.x;
 
-    const int hi = wavefronts->d;
-    const int lo = -wavefronts->d;
+    const int hi = distance;
+    const int lo = -distance;
 
     for(int k = lo + tid; k <= hi; k += tnum) {
         // Load the three necesary values on registers
@@ -159,14 +156,14 @@ __device__ void WF_compute_kernel (edit_wavefronts_t* const wavefronts,
 
         // set in next_backtraces the correct operation
         // -1 because operation 0 is at distance 1
-        int curr_d = wavefronts->d - 1;
+        int curr_d = distance - 1;
         int word = curr_d / 32;
         curr_bt->words[0] = prev_bt->words[0];
         curr_bt->words[1] = prev_bt->words[1];
         curr_bt->words[word] |= (((uint64_t)op) <<  ((curr_d % 32) * 2));
 
         const ewf_offset_t res = WF_extend_kernel(
-                 element, wavefronts, text, pattern,
+                 element, text, pattern,
                  tlen, plen, k, next_off_k);
         next_offsets[k] = res;
     }
@@ -183,18 +180,17 @@ __global__ void WF_edit_distance (const WF_element* elements,
     const int tid = threadIdx.x;
     const WF_element element = elements[blockIdx.x];
 
-    SEQ_TYPE* const shared_text = (SEQ_TYPE*)&shared_mem_chunk[0];
-    SEQ_TYPE* const shared_pattern = (SEQ_TYPE*)&shared_mem_chunk[max_seq_len];
+    SEQ_TYPE* const shared_pattern = (SEQ_TYPE*)&shared_mem_chunk[0];
+    SEQ_TYPE* const shared_text = (SEQ_TYPE*)&shared_mem_chunk[max_seq_len];
 
     int text_len = element.tlen;
     int pattern_len = element.plen;
     SEQ_TYPE* text = TEXT_PTR(blockIdx.x, sequences_base_ptr, max_seq_len);
     SEQ_TYPE* pattern = PATTERN_PTR(blockIdx.x, sequences_base_ptr, max_seq_len);
 
-    // Put text and pattern to shared memory
-    for (int i=tid; i<max_seq_len; i += blockDim.x) {
-        shared_text[i] = text[i];
-        shared_pattern[i] = pattern[i];
+    // Pattern and text are contiguous in memory
+    for (int i=tid*4; i<max_seq_len*2; i += blockDim.x*4) {
+        *(uint32_t*)(&shared_pattern[i]) = *(uint32_t*)(&pattern[i]);
     }
 
     // Skip text/pattern
@@ -211,19 +207,10 @@ __global__ void WF_edit_distance (const WF_element* elements,
 
     // + max_distance to center the offsets, +1 to avoid loop peeling in the
     // compute function
-    __shared__ edit_wavefronts_t wavefronts_obj;
-    wavefronts_obj = {.d = 0, .offsets = shared_offsets + max_distance + 1};
-    __shared__ edit_wavefronts_t next_wavefronts_obj;
-    next_wavefronts_obj = {.d = 0, .offsets = shared_next_offsets + max_distance + 1};
+    ewf_offset_t* wf_offsets = shared_offsets + max_distance + 1;
+    ewf_offset_t* next_wf_offsets = shared_next_offsets + max_distance + 1;
 
-    // Use pointers to be able to swap them efficiently
-    edit_wavefronts_t* wavefronts = &wavefronts_obj;
-    edit_wavefronts_t* next_wavefronts = &next_wavefronts_obj;
-
-    // Get backtraces from shared memory, skip the last offset
-
-    // TODO: Why dynamically allocated shared memory launch unaligned address
-    // error?
+    // TODO: Remove magic number
     __shared__ WF_backtrace_t backtraces_shared[WF_ELEMENTS(64)];
     __shared__ WF_backtrace_t next_backtraces_shared[WF_ELEMENTS(64)];
     for (int i=tid; i<WF_ELEMENTS(64); i += blockDim.x) {
@@ -241,32 +228,29 @@ __global__ void WF_edit_distance (const WF_element* elements,
     const ewf_offset_t target_offset = EWAVEFRONT_OFFSET(text_len, pattern_len);
 
     int distance = 0;
-    wavefronts->d = distance;
 
     if (tid == 0) {
-        ewf_offset_t res = WF_extend_kernel(element, wavefronts, text, pattern,
+        ewf_offset_t res = WF_extend_kernel(element, text, pattern,
                                             text_len, pattern_len, 0, 0);
-        wavefronts->offsets[0] = res;
+        wf_offsets[0] = res;
     }
 
     for (distance = 1; distance < max_distance; distance++) {
-        wavefronts->d = distance;
         // Computes does compute + extend per diagonal
         // TODO: Change function name
-        WF_compute_kernel(wavefronts, next_wavefronts, backtraces,
+        WF_compute_kernel(wf_offsets, next_wf_offsets, backtraces,
                   next_backtraces, element, shared_text, shared_pattern,
-                  text_len, pattern_len);
+                  text_len, pattern_len, distance);
 
         // Compare against next_offsets becuse the extend updates that
-        if (target_k_abs <= distance && next_wavefronts->offsets[target_k] == target_offset) {
-            wavefronts->d++;
+        if (target_k_abs <= distance && next_wf_offsets[target_k] == target_offset) {
             break;
         }
 
         // SWAP offsets
-        edit_wavefronts_t* offset_tmp = next_wavefronts;
-        next_wavefronts = wavefronts;
-        wavefronts = offset_tmp;
+        ewf_offset_t* offset_tmp = next_wf_offsets;
+        next_wf_offsets = wf_offsets;
+        wf_offsets = offset_tmp;
 
         // SWAP backtraces
         WF_backtrace_t* bt_tmp = next_backtraces;
