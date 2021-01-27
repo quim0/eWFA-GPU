@@ -132,34 +132,21 @@ bool Sequences::GPU_memory_free () {
 
 bool Sequences::GPU_prepare_memory_next_batch () {
     // first "alginment" (sequence pair) of the current batch
-    int curr_position = (++this->batch_idx * this->batch_size);
+    int curr_position = ((this->batch_idx + 1) * this->batch_size);
+    // This is redundant but just in case
     if (curr_position >= this->num_elements) {
         DEBUG("All batches have already been processed.");
         return false;
     }
     DEBUG("Rearranging memory for batch iteration %d (position %d)",
-           this->batch_idx, initial_alignment + curr_position);
+           this->batch_idx+1, initial_alignment + curr_position);
     // The last "batch" may be sorter than a complete batch, e.g 10 elements,
     // batch size of 3
     int curr_batch_size = ((this->num_elements - curr_position) < this->batch_size) ?
                             (this->num_elements - curr_position) : this->batch_size;
 
-    // Send the new unpacked text/pattern sequences to device
-    size_t seq_size_bytes =
-        this->sequences_reader.max_seq_len_unpacked * sizeof(SEQ_TYPE);
-    SEQ_TYPE* first_pos_ptr = PATTERN_PTR(
-        this->elements[curr_position + this->initial_alignment].alignment_idx,
-        this->sequences_reader.get_sequences_buffer_unpacked(),
-        this->sequences_reader.max_seq_len_unpacked);
-
-    cudaMemcpyAsync(this->sequences_device_ptr_unpacked,
-               first_pos_ptr,
-               (seq_size_bytes * 2) * curr_batch_size,
-               cudaMemcpyHostToDevice,
-               this->HtD_stream);
-    CUDA_CHECK_ERR
-
     // Zero the packed sequences
+    // TODO: Is this really necessary, as we have the distance
     cudaMemsetAsync(this->sequences_device_ptr,
                     0,
                     this->sequences_reader.max_seq_len * 2 * this->batch_size,
@@ -180,10 +167,10 @@ bool Sequences::GPU_prepare_memory_next_batch () {
                                         this->sequences_reader.max_seq_len);
 
     CUDA_CHECK_ERR;
-    // Send the new text_len and pattern_len to device
+    // Send the new text_len and pattern_len to device, this is launched in
+    // stream 0 so it can be overlapped with compact_sequences kernel
     cudaMemcpyAsync(this->d_elements, &this->elements[curr_position + initial_alignment],
-               curr_batch_size * sizeof(WF_element), cudaMemcpyHostToDevice,
-               this->HtD_stream);
+               curr_batch_size * sizeof(WF_element), cudaMemcpyHostToDevice, 0);
     CUDA_CHECK_ERR;
 
     return true;
@@ -212,7 +199,7 @@ void Sequences::GPU_launch_wavefront_distance () {
                      // in a wavefront to avoid loop peeling
                      + 2 * (WF_ELEMENTS(this->max_distance) + 2) * sizeof(ewf_offset_t);
 
-    // Wait until the sequences are copied to the device
+    // Wait until the sequences are packed in the device
     cudaStreamSynchronize(this->HtD_stream);
     CUDA_CHECK_ERR
 
@@ -225,43 +212,89 @@ void Sequences::GPU_launch_wavefront_distance () {
                                               this->max_distance,
                                               this->sequences_reader.max_seq_len,
                                               this->d_cigars);
-#ifdef DEBUG_MODE
-    // CopyIn copies the packed backtraces in
-    size_t curr_position = (this->batch_idx * this->batch_size) +
-                        this->initial_alignment;
-    this->h_cigars.copyIn(this->d_cigars);
-    SEQ_TYPE* seq_base_ptr = this->sequences_reader.get_sequences_buffer_unpacked();
-    size_t max_seq_len = this->sequences_reader.max_seq_len_unpacked;
-    int total_corrects = 0;
-    for (int i=0; i<blocks_x; i++) {
-        if (this->h_cigars.check_cigar(i, this->elements[curr_position + i],
-            seq_base_ptr, max_seq_len))
-            total_corrects++;
-    }
-
-    if (total_corrects == blocks_x)
-        DEBUG_GREEN("Correct alignments: %d/%d", total_corrects, blocks_x)
-    else
-        DEBUG_RED("Correct alignments: %d/%d", total_corrects, blocks_x)
-#endif
 }
 
 // Returns false when everything is comple
 bool Sequences::prepare_next_batch () {
+    // Async, memset(0) the ascii CIGARs buffer on the device
+    this->d_cigars.device_reset_ascii();
+
+    int curr_position = (this->batch_idx * this->batch_size);
+    int curr_batch_size = \
+        ((this->num_elements - curr_position) < this->batch_size) ?
+        (this->num_elements - curr_position) : this->batch_size;
+
+    // Blocks of 512 threads (arbitrary choice)
+    int num_blocks = curr_batch_size / 512;
+    num_blocks = (curr_batch_size % 512) ? num_blocks+1 : num_blocks;
+    dim3 gridSize(num_blocks, 1);
+    dim3 blockSize(512, 1);
+
+    // This is async, but it's on the same stream than the alignment kernel, so
+    // it won't execute until the alignment kernel has finished.
+    generate_cigars<<<gridSize, blockSize>>>(this->sequences_device_ptr,
+                          this->d_elements,
+                          this->sequences_reader.max_seq_len,
+                          this->d_cigars,
+                          curr_batch_size);
+
     // Wait for the kernel to finish
+    bool finished = this->is_last_iter();
+
+    // Copy next unpacked sequences while the alignment or cigar recovery is
+    // executing.
+    if (!finished) {
+        int next_position = ((this->batch_idx + 1) * this->batch_size);
+        int next_batch_size = \
+            ((this->num_elements - next_position) < this->batch_size) ?
+            (this->num_elements - next_position) : this->batch_size;
+        size_t seq_size_bytes =
+            this->sequences_reader.max_seq_len_unpacked * sizeof(SEQ_TYPE);
+        SEQ_TYPE* first_pos_ptr = PATTERN_PTR(
+            this->elements[next_position + this->initial_alignment].alignment_idx,
+            this->sequences_reader.get_sequences_buffer_unpacked(),
+            this->sequences_reader.max_seq_len_unpacked);
+        cudaMemcpyAsync(this->sequences_device_ptr_unpacked,
+                   first_pos_ptr,
+                   (seq_size_bytes * 2) * next_batch_size,
+                   cudaMemcpyHostToDevice,
+                   this->HtD_stream);
+        CUDA_CHECK_ERR
+    }
+
+    // This is async on stream 0, copy ASCII cigars from device to host
+    this->h_cigars.copyInAscii(this->d_cigars);
+
+    // All ASCII cigars are on host, we can start next iteration
     cudaStreamSynchronize(0);
     CUDA_CHECK_ERR;
-    bool ret;
 
-    // This is async
-    ret = this->GPU_prepare_memory_next_batch();
+#ifdef DEBUG_MODE
+    size_t curr_alignment = (this->batch_idx * this->batch_size) +
+                        this->initial_alignment;
+    SEQ_TYPE* seq_base_ptr = this->sequences_reader.get_sequences_buffer_unpacked();
+    size_t max_seq_len = this->sequences_reader.max_seq_len_unpacked;
+    int total_corrects = 0;
+    for (int i=0; i<curr_batch_size; i++) {
+        edit_cigar_t* curr_cigar = this->h_cigars.get_cigar_ascii(i);
+        if (this->h_cigars.check_cigar(i, this->elements[curr_alignment + i],
+            seq_base_ptr, max_seq_len, curr_cigar)) {
+            total_corrects++;
+        }
+    }
 
-    // This is sync
-    this->h_cigars.copyIn(this->d_cigars);
+    if (total_corrects == curr_batch_size)
+        DEBUG_GREEN("Correct alignments: %d/%d", total_corrects, curr_batch_size)
+    else
+        DEBUG_RED("Correct alignments: %d/%d", total_corrects, curr_batch_size)
+#endif
 
-    // Put all the device cigars at 0 again
-    //this->d_cigars.device_reset();
-    this->h_cigars.reset();
+    if (!finished) {
+        // This is async
+        this->GPU_prepare_memory_next_batch();
+    }
 
-    return ret;
+    this->batch_idx++;
+
+    return !finished;
 }

@@ -35,8 +35,14 @@ __global__ void WF_edit_distance (const WF_element* elements,
                                   const size_t max_seq_len,
                                   Cigars cigars);
 
-__global__ void compact_sequences(const SEQ_TYPE* sequences_in,
-                                  SEQ_TYPE* const sequences_out,
-                                  const size_t max_seq_len_unpacked,
-                                  const size_t max_seq_len_packed);
+__global__ void compact_sequences (const SEQ_TYPE* sequences_in,
+                                   SEQ_TYPE* const sequences_out,
+                                   const size_t max_seq_len_unpacked,
+                                   const size_t max_seq_len_packed);
+
+__global__ void generate_cigars(const SEQ_TYPE* const sequences,
+                                const WF_element* const elements,
+                                const size_t max_seq_len_packed,
+                                Cigars cigars,
+                                const int num_cigars);
 #endif

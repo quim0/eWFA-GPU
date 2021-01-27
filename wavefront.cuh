@@ -56,6 +56,12 @@ public:
             CUDA_CHECK_ERR
             cudaMemset(this->data, 0, this->cigars_results_size());
             CUDA_CHECK_ERR
+
+            DEBUG("Allocating %zu MiB to store the ASCII CIGAR results on GPU.");
+            cudaMalloc((void**) &this->cigars_ascii, this->cigars_size_bytes());
+            CUDA_CHECK_ERR
+            cudaMemset(this->cigars_ascii, 0, this->cigars_size_bytes());
+            CUDA_CHECK_ERR
         }
         else {
             cudaMallocHost((void**)&this->data, this->cigars_results_size());
@@ -63,7 +69,7 @@ public:
                 fprintf(stderr, "Out of memory on host. (%s:%d)", __FILE__, __LINE__);
                 exit(1);
             }
-            this->cigars_ascii = (edit_cigar_t*)calloc(this->cigars_size_bytes(), 1);
+            cudaMallocHost((void**)&this->cigars_ascii, this->cigars_size_bytes());
             if (!this->cigars_ascii) {
                 fprintf(stderr, "Out of memory on host. (%s:%d)", __FILE__, __LINE__);
                 exit(1);
@@ -76,7 +82,7 @@ public:
         return &this->data[n];
     }
 
-    __host__ edit_cigar_t* get_cigar_ascii (const int n) const {
+    __host__ __device__ edit_cigar_t* get_cigar_ascii (const int n) const {
         return &this->cigars_ascii[n * this->cigar_max_len];
     }
 
@@ -86,8 +92,20 @@ public:
         DEBUG("Copied the packed backtraces from the device to host.");
     }
 
+    __host__ void copyInAscii (const Cigars device_cigars) {
+        cudaMemcpyAsync(this->cigars_ascii, device_cigars.cigars_ascii,
+        this->cigars_size_bytes(), cudaMemcpyDeviceToHost, 0);
+        CUDA_CHECK_ERR;
+        DEBUG("Copied the CIGARS from the device to host.");
+    }
+
     __host__ void device_reset () {
         cudaMemset(this->data, 0, this->cigars_results_size());
+        CUDA_CHECK_ERR
+    }
+
+    __host__ void device_reset_ascii () {
+        cudaMemsetAsync(this->cigars_ascii, 0, this->cigars_size_bytes(), 0);
         CUDA_CHECK_ERR
     }
 
@@ -237,20 +255,23 @@ public:
 
     __host__ bool check_cigar (const int n, const WF_element element,
                                const SEQ_TYPE* seq_base_ptr,
-                               const size_t max_seq_len) {
+                               const size_t max_seq_len,
+                               const edit_cigar_t* curr_cigar) {
         int text_pos = 0, pattern_pos = 0;
         SEQ_TYPE* text = TEXT_PTR(element.alignment_idx, seq_base_ptr,
                                   max_seq_len);
         SEQ_TYPE* pattern= PATTERN_PTR(element.alignment_idx, seq_base_ptr,
                                         max_seq_len);
 
-        const edit_cigar_t* curr_cigar = this->generate_ascii_cigar(n,
-                                                        text,
-                                                        element.tlen,
-                                                        pattern,
-                                                        element.plen);
-        if (!curr_cigar)
-            return false;
+        // TODO: Also generate CIGAR on CPU and strcmp it with GPU generated
+        // cigar?
+        //const edit_cigar_t* curr_cigar = this->generate_ascii_cigar(n,
+        //                                                text,
+        //                                                element.tlen,
+        //                                                pattern,
+        //                                                element.plen);
+        //if (!curr_cigar)
+        //    return false;
 #ifdef DEBUG_MODE
         if (n == 0) {
             DEBUG("CIGAR: %s", curr_cigar);
@@ -263,10 +284,11 @@ public:
             switch (curr_cigar_element) {
                 case 'M':
                     if (pattern[pattern_pos] != text[text_pos]) {
-                        DEBUG("Alignment not matching at CCIGAR index %d"
+                        DEBUG("CIGAR: %s", curr_cigar);
+                        DEBUG("Alignment %d not matching at CCIGAR index %d"
                               " (pattern[%d] = %c != text[%d] = %c)",
-                              i, pattern_pos, pattern[pattern_pos],
-                              text_pos, text[text_pos]);
+                              element.alignment_idx, i, pattern_pos,
+                              pattern[pattern_pos], text_pos, text[text_pos]);
                         return false;
                     }
                     ++pattern_pos;
@@ -280,10 +302,11 @@ public:
                     break;
                 case 'X':
                     if (pattern[pattern_pos] == text[text_pos]) {
-                        DEBUG("Alignment not mismatching at CCIGAR index %d"
+                        DEBUG("CIGAR: %s", curr_cigar);
+                        DEBUG("Alignment %d not mismatching at CCIGAR index %d"
                               " (pattern[%d] = %c == text[%d] = %c)",
-                              i, pattern_pos, pattern[pattern_pos],
-                              text_pos, text[text_pos]);
+                              element.alignment_idx, i, pattern_pos,
+                              pattern[pattern_pos], text_pos, text[text_pos]);
                         return false;
                     }
                     ++pattern_pos;
@@ -311,6 +334,7 @@ public:
 
         return true;
     }
+
 private:
     size_t cigars_size_bytes () {
         return this->num_cigars * this->cigar_max_len * sizeof(edit_cigar_t);
@@ -385,6 +409,14 @@ private:
     bool GPU_prepare_memory_next_batch ();
     SEQ_TYPE* sequences_device_ptr;
     SEQ_TYPE* sequences_device_ptr_unpacked;
+
+    bool is_last_iter () {
+        int curr_position = ((this->batch_idx + 1) * this->batch_size);
+        if (curr_position >= this->num_elements) {
+            return true;
+        }
+        return false;
+    };
 };
 
 #endif // Header guard WAVEFRONT_H

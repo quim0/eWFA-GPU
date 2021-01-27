@@ -24,9 +24,7 @@
 #include <cuda_runtime.h>
 #include <inttypes.h>
 
-// Assumes 1 block per element
-__device__ ewf_offset_t WF_extend_kernel (const WF_element element,
-                                  const SEQ_TYPE* text,
+__device__ ewf_offset_t WF_extend_kernel (const SEQ_TYPE* text,
                                   const SEQ_TYPE* pattern,
                                   const int tlen,
                                   const int plen,
@@ -173,7 +171,7 @@ __device__ void WF_compute_kernel (ewf_offset_t* const offsets,
         }
 
         const ewf_offset_t res = WF_extend_kernel(
-                 element, text, pattern,
+                 text, pattern,
                  tlen, plen, k, next_off_k);
         next_offsets[k] = res;
     }
@@ -249,10 +247,12 @@ __global__ void WF_edit_distance (const WF_element* elements,
     int distance = 0;
 
     if (tid == 0) {
-        ewf_offset_t res = WF_extend_kernel(element, text, pattern,
-                                            text_len, pattern_len, 0, 0);
+        ewf_offset_t res = WF_extend_kernel(text, pattern, text_len,
+                                            pattern_len, 0, 0);
         wf_offsets[0] = res;
     }
+
+    __syncthreads();
 
     for (distance = 1; distance < max_distance; distance++) {
         // Computes does compute + extend per diagonal
@@ -287,22 +287,23 @@ __global__ void WF_edit_distance (const WF_element* elements,
     curr_res->words[0] = next_backtraces_w0[target_k];
     curr_res->words[1] = next_backtraces_w1[target_k];
 
+    if (distance == max_distance && tid == 0) {
+        // TODO
+        printf("Max distance reached at alignment %d\n", blockIdx.x);
+    }
+
 #ifdef DEBUG_MODE
     if (blockIdx.x == 0 && tid == 0) {
-        if (distance == max_distance) {
-            // TODO
-            printf("Max distance reached!!!\n");
-        }
         printf("Distance: %d\n", distance);
     }
 #endif
 }
 
 // threadIdx.y decides if the thread works on the pattern (0) or text (1)
-__global__ void compact_sequences(const SEQ_TYPE* const sequences_in,
-                                  SEQ_TYPE* const sequences_out,
-                                  const size_t max_seq_len_unpacked,
-                                  const size_t max_seq_len_packed) {
+__global__ void compact_sequences (const SEQ_TYPE* const sequences_in,
+                                   SEQ_TYPE* const sequences_out,
+                                   const size_t max_seq_len_unpacked,
+                                   const size_t max_seq_len_packed) {
     const int alignment_idx = blockIdx.x;
 
     // Get pointers of the ASCII sequences
@@ -377,5 +378,97 @@ __global__ void compact_sequences(const SEQ_TYPE* const sequences_in,
         }
 
         sequence_packed[le_byte_idx] = packed_reg;
+    }
+}
+
+
+// Each thread will compute a backtrace
+__global__ void generate_cigars (const SEQ_TYPE* const sequences,
+                                 const WF_element* const elements,
+                                 const size_t max_seq_len_packed,
+                                 Cigars cigars,
+                                 const int num_cigars) {
+    int tid = blockIdx.x*blockDim.x + threadIdx.x;
+    if (tid >= num_cigars) {
+        return;
+    }
+
+    const WF_element element = elements[tid];
+    const int tlen = element.tlen;
+    const int plen = element.plen;
+
+    // Curr ASCII cigar buffer
+    char* cigar_ascii = cigars.get_cigar_ascii(tid);
+
+    // Curr packed backtrace
+    const WF_backtrace_result_t* packed_bt = cigars.get_backtraces(tid);
+
+
+    SEQ_TYPE* const pattern_global = PATTERN_PTR(tid,
+                                                 sequences,
+                                                 max_seq_len_packed);
+
+    // TODO: Use shared?
+
+    SEQ_TYPE* pattern = pattern_global;
+    SEQ_TYPE* text = pattern_global + max_seq_len_packed;
+
+    ewf_offset_t curr_off_value = 0;
+    int curr_k = 0;
+    const int distance = packed_bt->distance;
+
+    for (int d=0; d<distance; d++) {
+        const ewf_offset_t prev_offset = curr_off_value;
+        curr_off_value = WF_extend_kernel(text, pattern, tlen, plen,
+                                            curr_k, curr_off_value);
+        int diff = curr_off_value - prev_offset;
+        for (int j=0; j<diff; j++) {
+            *cigar_ascii = 'M';
+            cigar_ascii++;
+        }
+
+        const int w_idx = d / 32;
+        const int w_mod = d % 32;
+
+        uint64_t op = (uint64_t)
+                        ((packed_bt->words[w_idx] >> (w_mod * 2)) & 3);
+
+        switch (op) {
+                // k + 1
+                case OP_DEL:
+                    *cigar_ascii = 'D';
+                    curr_k--;
+                    break;
+                // k
+                case OP_SUB:
+                    *cigar_ascii = 'X';
+                    curr_off_value++;
+                    break;
+                // k  - 1
+                case OP_INS:
+                    *cigar_ascii = 'I';
+                    curr_k++;
+                    curr_off_value++;
+                    break;
+                default:
+                    printf("(tid %d) Incorrect backtrace operations vector! "
+                           "This is a bug in the code and should not happen"
+                           " d: %d, distance: %d, k: %d, offset: %d, op: %d"
+                           " packed_bt: %xl, %xl\n",
+                           tid, d, distance, curr_k, curr_off_value, op,
+                           packed_bt->words[0], packed_bt->words[1]);
+                    return;
+        }
+        cigar_ascii++;
+    }
+
+    // Last extension
+    const ewf_offset_t prev_offset = curr_off_value;
+    curr_off_value = WF_extend_kernel(text, pattern, tlen, plen,
+                                        curr_k, curr_off_value);
+    int diff = curr_off_value - prev_offset;
+    for (int j=0; j<diff; j++) {
+        *cigar_ascii = 'M';
+        cigar_ascii++;
     }
 }
