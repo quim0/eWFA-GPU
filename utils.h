@@ -64,19 +64,20 @@ public:
                                               num_sequences_read(0) {
         // Allow 100% of error rate, make sure it is 32 bits aligned
         this->max_seq_len_unpacked = seq_len * 2;
-        this->max_seq_len_unpacked += (this->max_seq_len_unpacked % 4);
+        this->max_seq_len_unpacked += (4 - (this->max_seq_len_unpacked % 4));
         // Max sequence length in bytes, encoding the sequence elements in 2
         // bits (4 elements per byte)
-        this->max_seq_len = ((seq_len / 4) + (seq_len % 4)) * 2;
+        this->max_seq_len = this->max_seq_len_unpacked/4;
         // Make sure sequences are 32 bits aligned
-        // TODO: CHECK THIS!
-        this->max_seq_len += (this->max_seq_len % 4);
-        // Add extra 32 bits just to make sure, is this necessary? Nobody knows
-        this->max_seq_len += 4;
+        this->max_seq_len += (4 - (this->max_seq_len % 4));
         DEBUG("SequenceReader created:\n"
               "    File: %s\n"
-              "    Sequence avg length: %zu\n"
-              "    Number of sequences: %zu", seq_file, seq_len, num_alignments);
+              "    Sequence avg length:  %zu\n"
+              "    Number of sequences:  %zu\n"
+              "    Max seq len unpacked: %zu\n"
+              "    Max seq len packed:   %zu",
+              seq_file, seq_len, num_alignments, this->max_seq_len_unpacked,
+              this->max_seq_len);
     }
 
     bool skip_n_alignments (int n);
