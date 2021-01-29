@@ -281,11 +281,17 @@ __global__ void WF_edit_distance (const WF_element* elements,
         backtraces_w1 = bt_tmp_w1;
     }
 
-    WF_backtrace_result_t *curr_res = cigars.get_backtraces(blockIdx.x);
-    curr_res->distance = distance;
-    // TODO: Check if it's in next_backtraces for all cases. It should be
-    curr_res->words[0] = next_backtraces_w0[target_k];
-    curr_res->words[1] = next_backtraces_w1[target_k];
+    if (tid == 0) {
+        WF_backtrace_result_t *curr_res = cigars.get_backtraces(blockIdx.x);
+        curr_res->distance = distance;
+        if (distance == max_distance) {
+            curr_res->words[0] = backtraces_w0[target_k];
+            curr_res->words[1] = backtraces_w1[target_k];
+        } else {
+            curr_res->words[0] = next_backtraces_w0[target_k];
+            curr_res->words[1] = next_backtraces_w1[target_k];
+        }
+    }
 
     if (distance == max_distance && tid == 0) {
         // TODO
@@ -325,9 +331,11 @@ __global__ void compact_sequences (const SEQ_TYPE* const sequences_in,
 
     // Linearize thread ids to copy the text and pattern
     int cpytid = threadIdx.y*blockDim.x + threadIdx.x;
-    for (int i=cpytid; i<(max_seq_len_packed*2); i += blockDim.x*blockDim.y) {
-        *(uint32_t*)(&sequences_sh[i*4]) = *(uint32_t*)(&pattern_unpacked[i*4]);
+    for (int i=cpytid*4; i<(max_seq_len_unpacked*2); i += blockDim.x*blockDim.y*4) {
+        *(uint32_t*)(&sequences_sh[i]) = *(uint32_t*)(&pattern_unpacked[i]);
     }
+
+    __syncthreads();
 
     uint8_t* sequence_unpacked = sequences_sh;
     if (threadIdx.y == 1) {
@@ -337,7 +345,7 @@ __global__ void compact_sequences (const SEQ_TYPE* const sequences_in,
 
 
     // Each thread packs 4 bytes into 1 byte.
-    for (int i=threadIdx.x; i<max_seq_len_packed; i += blockDim.x) {
+    for (int i=threadIdx.x; i<(max_seq_len_unpacked/4); i += blockDim.x) {
         uint32_t bases = *((uint32_t*)(sequence_unpacked + i*4));
         if (bases == 0)
             break;
