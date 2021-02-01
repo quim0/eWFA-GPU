@@ -254,32 +254,36 @@ __global__ void WF_edit_distance (const WF_element* elements,
 
     __syncthreads();
 
-    for (distance = 1; distance < max_distance; distance++) {
-        // Computes does compute + extend per diagonal
-        // TODO: Change function name
-        WF_compute_kernel(wf_offsets, next_wf_offsets, backtraces_w0,
-                  backtraces_w1, next_backtraces_w0, next_backtraces_w1,
-                  element, shared_text, shared_pattern,
-                  text_len, pattern_len, distance);
+    // If distance is not zero, go to the loop
+    if (!(target_k_abs <= distance && wf_offsets[target_k] == target_offset)) {
+        for (distance = 1; distance < max_distance; distance++) {
+            // Computes does compute + extend per diagonal
+            // TODO: Change function name
+            WF_compute_kernel(wf_offsets, next_wf_offsets, backtraces_w0,
+                      backtraces_w1, next_backtraces_w0, next_backtraces_w1,
+                      element, shared_text, shared_pattern,
+                      text_len, pattern_len, distance);
 
-        // Compare against next_offsets becuse the extend updates that
-        if (target_k_abs <= distance && next_wf_offsets[target_k] == target_offset) {
-            break;
+            // Compare against next_offsets becuse the extend updates that
+            if (target_k_abs <= distance && next_wf_offsets[target_k] == target_offset) {
+                break;
+            }
+
+            // SWAP offsets
+            ewf_offset_t* offset_tmp = next_wf_offsets;
+            next_wf_offsets = wf_offsets;
+            wf_offsets = offset_tmp;
+
+            // SWAP backtraces
+            uint64_t* bt_tmp_w0 = next_backtraces_w0;
+            uint64_t* bt_tmp_w1 = next_backtraces_w1;
+            next_backtraces_w0 = backtraces_w0;
+            next_backtraces_w1 = backtraces_w1;
+            backtraces_w0 = bt_tmp_w0;
+            backtraces_w1 = bt_tmp_w1;
         }
-
-        // SWAP offsets
-        ewf_offset_t* offset_tmp = next_wf_offsets;
-        next_wf_offsets = wf_offsets;
-        wf_offsets = offset_tmp;
-
-        // SWAP backtraces
-        uint64_t* bt_tmp_w0 = next_backtraces_w0;
-        uint64_t* bt_tmp_w1 = next_backtraces_w1;
-        next_backtraces_w0 = backtraces_w0;
-        next_backtraces_w1 = backtraces_w1;
-        backtraces_w0 = bt_tmp_w0;
-        backtraces_w1 = bt_tmp_w1;
     }
+
 
     if (tid == 0) {
         WF_backtrace_result_t *curr_res = cigars.get_backtraces(blockIdx.x);
