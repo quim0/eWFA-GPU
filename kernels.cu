@@ -484,3 +484,118 @@ __global__ void generate_cigars (const SEQ_TYPE* const sequences,
         cigar_ascii++;
     }
 }
+
+// Each thread will compute a backtrace
+__global__ void generate_cigars_sh_mem (const SEQ_TYPE* const sequences,
+                                 const WF_element* const elements,
+                                 const size_t max_seq_len_packed,
+                                 Cigars cigars,
+                                 const int num_cigars) {
+    int tid = blockIdx.x*blockDim.x + threadIdx.x;
+
+    const WF_element element = elements[tid];
+    const int tlen = element.tlen;
+    const int plen = element.plen;
+
+
+    // Curr packed backtrace
+    const WF_backtrace_result_t* packed_bt = cigars.get_backtraces(tid);
+
+
+    SEQ_TYPE* const pattern_global = PATTERN_PTR(tid,
+                                                 sequences,
+                                                 max_seq_len_packed);
+
+    const int cigar_max_len = cigars.cigar_max_len;
+    extern __shared__ char cigars_ascii_sh[];
+    char* cigar_ascii = cigars_ascii_sh + (threadIdx.x * cigar_max_len);
+
+    // Zero sharem memory
+    for (int i=threadIdx.x*4; i<(blockDim.x*cigar_max_len); i += blockDim.x*4) {
+        *(uint32_t*)(cigars_ascii_sh + i) = 0;
+    }
+
+    __syncthreads();
+
+    SEQ_TYPE* pattern = pattern_global;
+    SEQ_TYPE* text = pattern_global + max_seq_len_packed;
+
+    ewf_offset_t curr_off_value = 0;
+    int curr_k = 0;
+    const int distance = packed_bt->distance;
+
+    if (tid >= num_cigars) {
+        return;
+    }
+
+    for (int d=0; d<distance; d++) {
+        const ewf_offset_t prev_offset = curr_off_value;
+        curr_off_value = WF_extend_kernel(text, pattern, tlen, plen,
+                                            curr_k, curr_off_value);
+        int diff = curr_off_value - prev_offset;
+        for (int j=0; j<diff; j++) {
+            *cigar_ascii = 'M';
+            cigar_ascii++;
+        }
+
+        const int w_idx = d / 32;
+        const int w_mod = d % 32;
+
+        uint64_t op = (uint64_t)
+                        ((packed_bt->words[w_idx] >> (w_mod * 2)) & 3);
+
+        switch (op) {
+                // k + 1
+                case OP_DEL:
+                    *cigar_ascii = 'D';
+                    curr_k--;
+                    break;
+                // k
+                case OP_SUB:
+                    *cigar_ascii = 'X';
+                    curr_off_value++;
+                    break;
+                // k  - 1
+                case OP_INS:
+                    *cigar_ascii = 'I';
+                    curr_k++;
+                    curr_off_value++;
+                    break;
+                default:
+                    printf("(tid %d) Incorrect backtrace operations vector! "
+                           "This is a bug in the code and should not happen"
+                           " d: %d, distance: %d, k: %d, offset: %d, op: %d"
+                           " packed_bt: %xl, %xl\n",
+                           tid, d, distance, curr_k, curr_off_value, op,
+                           packed_bt->words[0], packed_bt->words[1]);
+                    return;
+        }
+        cigar_ascii++;
+    }
+
+    // Last extension
+    const ewf_offset_t prev_offset = curr_off_value;
+    curr_off_value = WF_extend_kernel(text, pattern, tlen, plen,
+                                        curr_k, curr_off_value);
+    int diff = curr_off_value - prev_offset;
+    for (int j=0; j<diff; j++) {
+        *cigar_ascii = 'M';
+        cigar_ascii++;
+    }
+
+    // Cigar max len is always a multiple of 4
+    int inital_position = blockIdx.x*blockDim.x;
+    int num_cigars_to_process = blockDim.x;
+
+    if (blockDim.x > (num_cigars - inital_position)) {
+        num_cigars_to_process = num_cigars - inital_position;
+    }
+
+    __syncthreads();
+
+    int cigars_mem_size = cigar_max_len * num_cigars_to_process;
+    char* cigars_ascii_global = cigars.get_cigar_ascii(blockIdx.x*blockDim.x);
+    for (int i=threadIdx.x*4; i<cigars_mem_size; i += num_cigars_to_process*4) {
+        *(uint32_t*)(cigars_ascii_global + i) = *(uint32_t*)(cigars_ascii_sh + i);
+    }
+}

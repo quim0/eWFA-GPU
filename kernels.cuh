@@ -45,4 +45,11 @@ __global__ void generate_cigars(const SEQ_TYPE* const sequences,
                                 const size_t max_seq_len_packed,
                                 Cigars cigars,
                                 const int num_cigars);
+
+__global__ void generate_cigars_sh_mem(
+                                const SEQ_TYPE* const sequences,
+                                const WF_element* const elements,
+                                const size_t max_seq_len_packed,
+                                Cigars cigars,
+                                const int num_cigars);
 #endif

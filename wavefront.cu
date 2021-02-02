@@ -224,19 +224,47 @@ bool Sequences::prepare_next_batch () {
         ((this->num_elements - curr_position) < this->batch_size) ?
         (this->num_elements - curr_position) : this->batch_size;
 
+    // Use at most 50KiB of shared memory
+    int ALIGNMENTS_PER_BLOCK;
+    bool use_shared_mem;
+    if (this->sequences_reader.max_seq_len_unpacked < 400) {
+        ALIGNMENTS_PER_BLOCK = 128;
+        use_shared_mem = true;
+    } else if (this->sequences_reader.max_seq_len_unpacked < 800) {
+        ALIGNMENTS_PER_BLOCK = 64;
+        use_shared_mem = true;
+    } else if (this->sequences_reader.max_seq_len_unpacked < 1600) {
+        ALIGNMENTS_PER_BLOCK = 32;
+        use_shared_mem = true;
+    } else {
+        ALIGNMENTS_PER_BLOCK = 512;
+        use_shared_mem = false;
+    }
+
     // Blocks of 512 threads (arbitrary choice)
-    int num_blocks = curr_batch_size / 512;
-    num_blocks = (curr_batch_size % 512) ? num_blocks+1 : num_blocks;
+    int num_blocks = curr_batch_size / ALIGNMENTS_PER_BLOCK;
+    num_blocks = (curr_batch_size % ALIGNMENTS_PER_BLOCK) ? num_blocks+1 : num_blocks;
     dim3 gridSize(num_blocks, 1);
-    dim3 blockSize(512, 1);
+    dim3 blockSize(ALIGNMENTS_PER_BLOCK, 1);
+
+    size_t sh_mem_size = ALIGNMENTS_PER_BLOCK * this->h_cigars.cigar_max_len;
 
     // This is async, but it's on the same stream than the alignment kernel, so
     // it won't execute until the alignment kernel has finished.
-    generate_cigars<<<gridSize, blockSize>>>(this->sequences_device_ptr,
-                          this->d_elements,
-                          this->sequences_reader.max_seq_len,
-                          this->d_cigars,
-                          curr_batch_size);
+    if (use_shared_mem) {
+        generate_cigars_sh_mem<<<gridSize, blockSize, sh_mem_size>>>(
+                              this->sequences_device_ptr,
+                              this->d_elements,
+                              this->sequences_reader.max_seq_len,
+                              this->d_cigars,
+                              curr_batch_size);
+    } else {
+        generate_cigars<<<gridSize, blockSize>>>(this->sequences_device_ptr,
+                              this->d_elements,
+                              this->sequences_reader.max_seq_len,
+                              this->d_cigars,
+                              curr_batch_size);
+    }
 
     // Wait for the kernel to finish
     bool finished = this->is_last_iter();

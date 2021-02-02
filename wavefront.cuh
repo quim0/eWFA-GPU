@@ -47,8 +47,9 @@ public:
     __host__ Cigars (int n, size_t max_d, size_t cigar_max_len, bool device) {
         this->max_distance = max_d;
         this->num_cigars = n;
-        // +1 to store a nullbyte
-        this->cigar_max_len = cigar_max_len + 1;
+        // 32 bits aligned
+        this->cigar_max_len = cigar_max_len;
+        this->cigar_max_len += (4 - this->cigar_max_len%4);
         if (device) {
             DEBUG("Allocating %zu MiB to store the partial backtraces",
                   this->cigars_results_size() / (1 << 20));
@@ -335,6 +336,7 @@ public:
         return true;
     }
 
+    size_t cigar_max_len;
 private:
     size_t cigars_size_bytes () {
         return this->num_cigars * this->cigar_max_len * sizeof(edit_cigar_t);
@@ -343,7 +345,6 @@ private:
         return this->num_cigars * sizeof(WF_backtrace_result_t);
     }
     size_t max_distance;
-    size_t cigar_max_len;
     int num_cigars;
     WF_backtrace_result_t* data;
     edit_cigar_t* cigars_ascii;
