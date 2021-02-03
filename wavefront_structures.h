@@ -27,7 +27,7 @@
 #define SEQ_TYPE char
 
 typedef int32_t ewf_offset_t;
-typedef char edit_cigar_t;
+typedef signed char edit_cigar_t;
 
 #define OFFSETS_TOTAL_ELEMENTS(max_d) (max_d * max_d + (max_d * 2 + 1))
 #define WF_ELEMENTS(d) (d * 2 + 1)

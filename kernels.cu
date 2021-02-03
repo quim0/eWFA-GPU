@@ -410,7 +410,7 @@ __global__ void generate_cigars (const SEQ_TYPE* const sequences,
     const int plen = element.plen;
 
     // Curr ASCII cigar buffer
-    char* cigar_ascii = cigars.get_cigar_ascii(tid);
+    edit_cigar_t* cigar_ascii = cigars.get_cigar_ascii(tid);
 
     // Curr packed backtrace
     const WF_backtrace_result_t* packed_bt = cigars.get_backtraces(tid);
@@ -434,8 +434,14 @@ __global__ void generate_cigars (const SEQ_TYPE* const sequences,
         curr_off_value = WF_extend_kernel(text, pattern, tlen, plen,
                                             curr_k, curr_off_value);
         int diff = curr_off_value - prev_offset;
-        for (int j=0; j<diff; j++) {
-            *cigar_ascii = 'M';
+        if (diff/127) {
+            for (int j=0; j<(diff/127); j++) {
+                *cigar_ascii = (signed char)-127;
+                cigar_ascii++;
+            }
+        }
+        if (diff%127) {
+            *cigar_ascii = (signed char)(-(diff%127));
             cigar_ascii++;
         }
 
@@ -479,8 +485,14 @@ __global__ void generate_cigars (const SEQ_TYPE* const sequences,
     curr_off_value = WF_extend_kernel(text, pattern, tlen, plen,
                                         curr_k, curr_off_value);
     int diff = curr_off_value - prev_offset;
-    for (int j=0; j<diff; j++) {
-        *cigar_ascii = 'M';
+    if (diff/127) {
+        for (int j=0; j<(diff/127); j++) {
+            *cigar_ascii = (signed char)-127;
+            cigar_ascii++;
+        }
+    }
+    if (diff%127) {
+        *cigar_ascii = (signed char)(-(diff%127));
         cigar_ascii++;
     }
 }
@@ -507,8 +519,8 @@ __global__ void generate_cigars_sh_mem (const SEQ_TYPE* const sequences,
                                                  max_seq_len_packed);
 
     const int cigar_max_len = cigars.cigar_max_len;
-    extern __shared__ char cigars_ascii_sh[];
-    char* cigar_ascii = cigars_ascii_sh + (threadIdx.x * cigar_max_len);
+    extern __shared__ edit_cigar_t cigars_ascii_sh[];
+    edit_cigar_t* cigar_ascii = cigars_ascii_sh + (threadIdx.x * cigar_max_len);
 
     // Zero sharem memory
     for (int i=threadIdx.x*4; i<(blockDim.x*cigar_max_len); i += blockDim.x*4) {
@@ -533,8 +545,14 @@ __global__ void generate_cigars_sh_mem (const SEQ_TYPE* const sequences,
         curr_off_value = WF_extend_kernel(text, pattern, tlen, plen,
                                             curr_k, curr_off_value);
         int diff = curr_off_value - prev_offset;
-        for (int j=0; j<diff; j++) {
-            *cigar_ascii = 'M';
+        if (diff/127) {
+            for (int j=0; j<(diff/127); j++) {
+                *cigar_ascii = (signed char)-127;
+                cigar_ascii++;
+            }
+        }
+        if (diff%127) {
+            *cigar_ascii = (signed char)(-(diff%127));
             cigar_ascii++;
         }
 
@@ -578,8 +596,14 @@ __global__ void generate_cigars_sh_mem (const SEQ_TYPE* const sequences,
     curr_off_value = WF_extend_kernel(text, pattern, tlen, plen,
                                         curr_k, curr_off_value);
     int diff = curr_off_value - prev_offset;
-    for (int j=0; j<diff; j++) {
-        *cigar_ascii = 'M';
+    if (diff/127) {
+        for (int j=0; j<(diff/127); j++) {
+            *cigar_ascii = (signed char)-127;
+            cigar_ascii++;
+        }
+    }
+    if (diff%127) {
+        *cigar_ascii = (signed char)(-(diff%127));
         cigar_ascii++;
     }
 
@@ -594,7 +618,7 @@ __global__ void generate_cigars_sh_mem (const SEQ_TYPE* const sequences,
     __syncthreads();
 
     int cigars_mem_size = cigar_max_len * num_cigars_to_process;
-    char* cigars_ascii_global = cigars.get_cigar_ascii(blockIdx.x*blockDim.x);
+    edit_cigar_t* cigars_ascii_global = cigars.get_cigar_ascii(blockIdx.x*blockDim.x);
     for (int i=threadIdx.x*4; i<cigars_mem_size; i += num_cigars_to_process*4) {
         *(uint32_t*)(cigars_ascii_global + i) = *(uint32_t*)(cigars_ascii_sh + i);
     }

@@ -274,16 +274,24 @@ public:
         //if (!curr_cigar)
         //    return false;
 #ifdef DEBUG_MODE
+        edit_cigar_t* ascii_cigar;
+        edit_cigar_t* ascii_cigar_origin;
         if (n == 0) {
-            DEBUG("CIGAR: %s", curr_cigar);
+            ascii_cigar = (edit_cigar_t*)calloc(this->cigar_max_len*2,
+                                                sizeof(edit_cigar_t));
+            if (ascii_cigar == NULL) {
+                DEBUG(NOMEM_ERR_STR);
+                return false;
+            }
+            ascii_cigar_origin = ascii_cigar;
         }
 #endif
-        const size_t cigar_len = strnlen(curr_cigar, this->cigar_max_len);
+        const size_t cigar_len = strnlen((char*)curr_cigar, this->cigar_max_len);
 
         for (int i=0; i<cigar_len; i++) {
             edit_cigar_t curr_cigar_element = curr_cigar[i];
-            switch (curr_cigar_element) {
-                case 'M':
+            if (curr_cigar_element < 0) {
+                for (int j=0; j>curr_cigar_element; j--) {
                     if (pattern[pattern_pos] != text[text_pos]) {
                         DEBUG("CIGAR: %s", curr_cigar);
                         DEBUG("Alignment %d not matching at CCIGAR index %d"
@@ -294,28 +302,55 @@ public:
                     }
                     ++pattern_pos;
                     ++text_pos;
-                    break;
-                case 'I':
-                    ++text_pos;
-                    break;
-                case 'D':
-                    ++pattern_pos;
-                    break;
-                case 'X':
-                    if (pattern[pattern_pos] == text[text_pos]) {
-                        DEBUG("CIGAR: %s", curr_cigar);
-                        DEBUG("Alignment %d not mismatching at CCIGAR index %d"
-                              " (pattern[%d] = %c == text[%d] = %c)",
-                              element.alignment_idx, i, pattern_pos,
-                              pattern[pattern_pos], text_pos, text[text_pos]);
-                        return false;
+#ifdef DEBUG_MODE
+                    if (n == 0) {
+                        *ascii_cigar = 'M';
+                        ascii_cigar++;
                     }
-                    ++pattern_pos;
-                    ++text_pos;
-                    break;
-                default:
-                    WF_FATAL("Invalid CIGAR generated.");
-                    break;
+#endif
+                }
+            } else {
+                switch (curr_cigar_element) {
+                    case 'I':
+                        ++text_pos;
+#ifdef DEBUG_MODE
+                    if (n == 0) {
+                        *ascii_cigar = 'I';
+                        ascii_cigar++;
+                    }
+#endif
+                        break;
+                    case 'D':
+                        ++pattern_pos;
+#ifdef DEBUG_MODE
+                    if (n == 0) {
+                        *ascii_cigar = 'D';
+                        ascii_cigar++;
+                    }
+#endif
+                        break;
+                    case 'X':
+                        if (pattern[pattern_pos] == text[text_pos]) {
+                            DEBUG("CIGAR: %s", curr_cigar);
+                            DEBUG("Alignment %d not mismatching at CCIGAR index %d"
+                                  " (pattern[%d] = %c == text[%d] = %c)",
+                                  element.alignment_idx, i, pattern_pos,
+                                  pattern[pattern_pos], text_pos, text[text_pos]);
+                            return false;
+                        }
+                        ++pattern_pos;
+                        ++text_pos;
+#ifdef DEBUG_MODE
+                    if (n == 0) {
+                        *ascii_cigar = 'X';
+                        ascii_cigar++;
+                    }
+#endif
+                        break;
+                    default:
+                        WF_FATAL("Invalid CIGAR generated.");
+                        break;
+                }
             }
         }
 
@@ -332,6 +367,13 @@ public:
                   "text-length: %zu", text_pos, element.tlen);
             return false;
         }
+
+#ifdef DEBUG_MODE
+        if (n == 0) {
+            DEBUG("CIGAR: %s", ascii_cigar_origin);
+            free(ascii_cigar_origin);
+        }
+#endif
 
         return true;
     }
@@ -385,15 +427,17 @@ public:
                                             sequences_reader(reader),  \
                                             initial_alignment(initial_alignment), \
                                             batch_idx(0),              \
+                                            // TODO: Determine better this
+                                            // seq_len as cigar size in bytes
                                             d_cigars(
                                                 Cigars(batch_size,
                                                        max_distance,
-                                                       seq_len * 2,
+                                                       seq_len,
                                                        true)),         \
                                             h_cigars(
                                                 Cigars(batch_size,
                                                        max_distance,
-                                                       seq_len * 2,
+                                                       seq_len,
                                                        false)) {
         // TODO: Destroy stream
         cudaStreamCreate(&this->HtD_stream);
