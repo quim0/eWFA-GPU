@@ -112,8 +112,12 @@ __device__ void WF_compute_kernel (ewf_offset_t* const offsets,
                                    ewf_offset_t* const next_offsets,
                                    uint64_t* const backtraces_w0,
                                    uint64_t* const backtraces_w1,
+                                   uint64_t* const backtraces_w2,
+                                   uint64_t* const backtraces_w3,
                                    uint64_t* const next_backtraces_w0,
                                    uint64_t* const next_backtraces_w1,
+                                   uint64_t* const next_backtraces_w2,
+                                   uint64_t* const next_backtraces_w3,
                                    const WF_element element,
                                    const SEQ_TYPE* text,
                                    const SEQ_TYPE* pattern,
@@ -153,23 +157,38 @@ __device__ void WF_compute_kernel (ewf_offset_t* const offsets,
 
         uint64_t* curr_bt_w0 = next_backtraces_w0 + k;
         uint64_t* curr_bt_w1 = next_backtraces_w1 + k;
+        uint64_t* curr_bt_w2 = next_backtraces_w2 + k;
+        uint64_t* curr_bt_w3 = next_backtraces_w3 + k;
         uint64_t* prev_bt_w0 = &backtraces_w0[k + (op - 2)];
         uint64_t* prev_bt_w1 = &backtraces_w1[k + (op - 2)];
+        uint64_t* prev_bt_w2 = &backtraces_w2[k + (op - 2)];
+        uint64_t* prev_bt_w3 = &backtraces_w3[k + (op - 2)];
 
         // set in next_backtraces the correct operation
         // -1 because operation 0 is at distance 1
         int curr_d = distance - 1;
         int word = curr_d / 32;
-        *curr_bt_w0 = *prev_bt_w0;
-        *curr_bt_w1 = *prev_bt_w1;
         uint64_t or_value = (((uint64_t)op) <<  ((curr_d % 32) * 2));
-        if (word == 0) {
-            *curr_bt_w0 |= or_value;
-        } else {
-            // TODO: Else-if if there are more than 2 words
-            *curr_bt_w1 |= or_value;
-        }
-
+        switch (word) {
+            case 0:
+                *curr_bt_w0 = *prev_bt_w0 | or_value;
+                break;
+            case 1:
+                *curr_bt_w0 = *prev_bt_w0;
+                *curr_bt_w1 = *prev_bt_w1 | or_value;
+                break;
+            case 2:
+                *curr_bt_w0 = *prev_bt_w0;
+                *curr_bt_w1 = *prev_bt_w1;
+                *curr_bt_w2 = *prev_bt_w2 | or_value;
+                break;
+            case 3:
+                *curr_bt_w0 = *prev_bt_w0;
+                *curr_bt_w1 = *prev_bt_w1;
+                *curr_bt_w2 = *prev_bt_w2;
+                *curr_bt_w3 = *prev_bt_w3 | or_value;
+                break;
+        };
         const ewf_offset_t res = WF_extend_kernel(
                  text, pattern,
                  tlen, plen, k, next_off_k);
@@ -221,24 +240,36 @@ __global__ void WF_edit_distance (const WF_element* elements,
     // TODO: Remove magic number
     // Avoid shared memory bank conflicts by using an struct of arrays instead
     // of an array of structs.
-    __shared__ uint64_t backtraces_w0_shared[WF_ELEMENTS(64)];
-    __shared__ uint64_t backtraces_w1_shared[WF_ELEMENTS(64)];
-    __shared__ uint64_t next_backtraces_w0_shared[WF_ELEMENTS(64)];
-    __shared__ uint64_t next_backtraces_w1_shared[WF_ELEMENTS(64)];
+    __shared__ uint64_t backtraces_w0_shared[WF_ELEMENTS(128)];
+    __shared__ uint64_t backtraces_w1_shared[WF_ELEMENTS(128)];
+    __shared__ uint64_t backtraces_w2_shared[WF_ELEMENTS(128)];
+    __shared__ uint64_t backtraces_w3_shared[WF_ELEMENTS(128)];
+    __shared__ uint64_t next_backtraces_w0_shared[WF_ELEMENTS(128)];
+    __shared__ uint64_t next_backtraces_w1_shared[WF_ELEMENTS(128)];
+    __shared__ uint64_t next_backtraces_w2_shared[WF_ELEMENTS(128)];
+    __shared__ uint64_t next_backtraces_w3_shared[WF_ELEMENTS(128)];
 
-    for (int i=tid; i<WF_ELEMENTS(64); i += blockDim.x) {
+    for (int i=tid; i<WF_ELEMENTS(128); i += blockDim.x) {
         backtraces_w0_shared[i] = 0;
         backtraces_w1_shared[i] = 0;
+        backtraces_w2_shared[i] = 0;
+        backtraces_w3_shared[i] = 0;
         next_backtraces_w0_shared[i] = 0;
         next_backtraces_w1_shared[i] = 0;
+        next_backtraces_w2_shared[i] = 0;
+        next_backtraces_w3_shared[i] = 0;
     }
 
     // We can not swap arrays so declare pointers here, also it's needed for
     // centering the array
     uint64_t* backtraces_w0 = backtraces_w0_shared + max_distance;
     uint64_t* backtraces_w1 = backtraces_w1_shared + max_distance;
+    uint64_t* backtraces_w2 = backtraces_w2_shared + max_distance;
+    uint64_t* backtraces_w3 = backtraces_w3_shared + max_distance;
     uint64_t* next_backtraces_w0 = next_backtraces_w0_shared + max_distance;
     uint64_t* next_backtraces_w1 = next_backtraces_w1_shared + max_distance;
+    uint64_t* next_backtraces_w2 = next_backtraces_w2_shared + max_distance;
+    uint64_t* next_backtraces_w3 = next_backtraces_w3_shared + max_distance;
 
     const int target_k = EWAVEFRONT_DIAGONAL(text_len, pattern_len);
     const int target_k_abs = (target_k >= 0) ? target_k : -target_k;
@@ -260,7 +291,9 @@ __global__ void WF_edit_distance (const WF_element* elements,
             // Computes does compute + extend per diagonal
             // TODO: Change function name
             WF_compute_kernel(wf_offsets, next_wf_offsets, backtraces_w0,
-                      backtraces_w1, next_backtraces_w0, next_backtraces_w1,
+                      backtraces_w1, backtraces_w2, backtraces_w3,
+                      next_backtraces_w0, next_backtraces_w1,
+                      next_backtraces_w2, next_backtraces_w3,
                       element, shared_text, shared_pattern,
                       text_len, pattern_len, distance);
 
@@ -277,10 +310,16 @@ __global__ void WF_edit_distance (const WF_element* elements,
             // SWAP backtraces
             uint64_t* bt_tmp_w0 = next_backtraces_w0;
             uint64_t* bt_tmp_w1 = next_backtraces_w1;
+            uint64_t* bt_tmp_w2 = next_backtraces_w2;
+            uint64_t* bt_tmp_w3 = next_backtraces_w3;
             next_backtraces_w0 = backtraces_w0;
             next_backtraces_w1 = backtraces_w1;
+            next_backtraces_w2 = backtraces_w2;
+            next_backtraces_w3 = backtraces_w3;
             backtraces_w0 = bt_tmp_w0;
             backtraces_w1 = bt_tmp_w1;
+            backtraces_w2 = bt_tmp_w2;
+            backtraces_w3 = bt_tmp_w3;
         }
     }
 
@@ -291,9 +330,13 @@ __global__ void WF_edit_distance (const WF_element* elements,
         if (distance == max_distance) {
             curr_res->words[0] = backtraces_w0[target_k];
             curr_res->words[1] = backtraces_w1[target_k];
+            curr_res->words[2] = backtraces_w2[target_k];
+            curr_res->words[3] = backtraces_w3[target_k];
         } else {
             curr_res->words[0] = next_backtraces_w0[target_k];
             curr_res->words[1] = next_backtraces_w1[target_k];
+            curr_res->words[2] = next_backtraces_w2[target_k];
+            curr_res->words[3] = next_backtraces_w3[target_k];
         }
     }
 

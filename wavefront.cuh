@@ -155,7 +155,6 @@ public:
 
         edit_cigar_t* cigar_ascii = this->get_cigar_ascii(n);
 
-        // Assume that the packed cigar have two 64 bit words
 		ewf_offset_t curr_off_value = 0;
         int curr_k = 0;
         for (int d=0; d<distance; d++) {
@@ -419,10 +418,7 @@ public:
                SequenceReader reader, int initial_alignment) :         \
                                             elements(e),               \
                                             num_elements(num_e),       \
-                                            // Max distance 64 because, right
-                                            // now, we have 128 bits of partial
-                                            // backtrace per diagonal
-                                            max_distance(64), \
+                                            max_distance(CURR_MAX_DISTANCE), \
                                             batch_size(batch_size),    \
                                             sequences_reader(reader),  \
                                             initial_alignment(initial_alignment), \
