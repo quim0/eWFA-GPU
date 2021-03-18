@@ -51,15 +51,15 @@ struct WF_element {
 
 // 128 bit backtrace data, max_distance = 64
 struct WF_backtrace_t {
-    uint64_t words[2];
+    uint64_t words[1];
 };
 
 struct WF_backtrace_result_t {
-    uint64_t words[2];
+    uint64_t words[1];
     int distance;
 };
 
-#define CURR_MAX_DISTANCE 64
+#define CURR_MAX_DISTANCE 32
 
 // Backtrace operations encoded in 2 bits, using more than 2 bits will break the
 // code, so don't do it.

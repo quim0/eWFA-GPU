@@ -422,7 +422,7 @@ public:
                                             // Max distance 64 because, right
                                             // now, we have 128 bits of partial
                                             // backtrace per diagonal
-                                            max_distance(64), \
+                                            max_distance(CURR_MAX_DISTANCE), \
                                             batch_size(batch_size),    \
                                             sequences_reader(reader),  \
                                             initial_alignment(initial_alignment), \
