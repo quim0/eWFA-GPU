@@ -136,6 +136,19 @@ int main (int argc, char** argv) {
          */
     };
 
+    int deviceCount = 0;
+    cudaGetDeviceCount(&deviceCount);
+    if (deviceCount == 0) {
+        WF_FATAL("No available CUDA devices detected.")
+    }
+
+    cudaSetDevice(0);
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, 0);
+    printf("Using device \"%s\", with compute capability %d.%d\n",
+           deviceProp.name, deviceProp.major, deviceProp.minor);
+
+
     options_t options = {options_arr, NUM_ARGUMENTS};
     bool success = parse_args(argc, argv, options);
     if (!success) {
@@ -172,8 +185,6 @@ int main (int argc, char** argv) {
     if (!reader.read_file()) {
         WF_FATAL("Could not read the sequences from file %s\n", seq_file);
     }
-
-    printf("num_threads=%d\n", num_threads);
 
     CLOCK_INIT_NO_DEBUG()
     CLOCK_START_NO_DEBUG()

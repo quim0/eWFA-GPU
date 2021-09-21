@@ -25,6 +25,15 @@ capability 8.0:
 $ make SM=80 COMPUTE=80 debug
 ```
 
+When running the binary, it prints the detected GPU name and its CUDA capability.
+Make sure that you compiled the binary for this capability, otherwise, the
+following error will be raised when trying to align sequences:
+
+```
+Error cudaErrorNoKernelImageForDevice: no kernel image is available for
+execution on the device
+```
+
 To compile with the most performant version (without alignment correctness
 checks):
 ```
