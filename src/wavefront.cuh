@@ -58,7 +58,8 @@ public:
             cudaMemset(this->data, 0, this->cigars_results_size());
             CUDA_CHECK_ERR
 
-            DEBUG("Allocating %zu MiB to store the ASCII CIGAR results on GPU.");
+            DEBUG("Allocating %zu MiB to store the ASCII CIGAR results on GPU.",
+                  this->cigars_size_bytes() / (1 << 20));
             cudaMalloc((void**) &this->cigars_ascii, this->cigars_size_bytes());
             CUDA_CHECK_ERR
             cudaMemset(this->cigars_ascii, 0, this->cigars_size_bytes());
