@@ -20,12 +20,11 @@
  */
 
 #include <pthread.h>
-#include "utils.h"
+#include "utils/arg_handler.h"
+#include "utils/sequence_reader.h"
 #include "wavefront.cuh"
 
-const char *USAGE_STR = "Usage:\n"
-                        "WFA_edit_gpu <file> <sequence_length> <num_of_aligments> "
-                        "<batch_size=num_of_sequences>\n";
+#define NUM_ARGUMENTS 5
 
 struct Parameters {
     char* seq_file;
@@ -71,21 +70,96 @@ void * worker(void * tdata) {
 }
 
 int main (int argc, char** argv) {
-    if (argc < 4 || argc > 6) {
-        WF_FATAL(USAGE_STR);
+
+    option_t options_arr[NUM_ARGUMENTS] = {
+        // 0
+        {.name = "Sequences file",
+         .description = "File containing the sequences to align.",
+         .short_arg = 'f',
+         .long_arg = "file",
+         .required = true,
+         .type = ARG_STR
+         },
+        // 1
+        {.name = "Number of alignments",
+         .description = "Number of alignments to read from the file (default=all"
+                        " alignments)",
+         .short_arg = 'n',
+         .long_arg = "num-alignments",
+         .required = true,
+         .type = ARG_INT
+         },
+        // 2
+        {.name = "Sequence length",
+         .description = "Maximum sequence length.",
+         .short_arg = 'l',
+         .long_arg = "seq-len",
+         .required = true,
+         .type = ARG_INT
+         },
+         // 3
+        {.name = "Batch size",
+         .description = "Number of alignments per batch (default=num-alignments).",
+         .short_arg = 'b',
+         .long_arg = "batch-size",
+         .required = false,
+         .type = ARG_INT
+         },
+        // 4
+        {.name = "Number of CPU threads",
+         .description = "Number of CPU threads, each CPU thread creates two "
+                        "streams to overlap compute and memory transfers. "
+                        "(default=1)",
+         .short_arg = 't',
+         .long_arg = "cpu-threads",
+         .required = false,
+         .type = ARG_INT
+         },
+        // 5
+        /*
+        {.name = "Check",
+         .description = "Check for alignment correctness",
+         .short_arg = 'c',
+         .long_arg = "check",
+         .required = false,
+         .type = ARG_NO_VALUE
+         },
+        // 6
+        {.name = "Maximum distance allowed",
+         .description = "Maximum distance that the kernel will be able to "
+                        "compute (32, 64, or 128).",
+         .short_arg = 'd',
+         .long_arg = "max-distance",
+         .required = true,
+         .type = ARG_INT
+         },
+         */
+    };
+
+    options_t options = {options_arr, NUM_ARGUMENTS};
+    bool success = parse_args(argc, argv, options);
+    if (!success) {
+        print_usage(options);
+        exit(1);
     }
 
-    char* seq_file = argv[1];
-    size_t seq_len = atoi(argv[2]);
-    size_t num_alignments = atoi(argv[3]);
-    size_t batch_size = (argc >= 5) ? atoi(argv[4]) : num_alignments;
-    unsigned int num_threads = (argc == 6) ? atoi(argv[5]) : 1;
+    char* seq_file = options.options[0].value.str_val;
+    size_t num_alignments = options.options[1].value.int_val;
+    size_t seq_len = options.options[2].value.int_val;
+    size_t batch_size = num_alignments;
+    if (options.options[3].parsed) {
+        batch_size = options.options[3].value.int_val;
+    }
+    unsigned int num_threads = 1;
+    if (options.options[4].parsed) {
+        num_threads = options.options[4].value.int_val;
+    }
 
     if (num_threads < 1)
         WF_FATAL("Minimum needed is 1 thread");
 
     if (batch_size > num_alignments)
-        WF_FATAL("batch_size must be >= than the number of alignments.");
+        WF_FATAL("batch_size must be <= than the number of alignments.");
 
     pthread_t *threads = (pthread_t*)calloc(num_threads, sizeof(pthread_t));
     if (threads == NULL)
@@ -98,6 +172,8 @@ int main (int argc, char** argv) {
     if (!reader.read_file()) {
         WF_FATAL("Could not read the sequences from file %s\n", seq_file);
     }
+
+    printf("num_threads=%d\n", num_threads);
 
     CLOCK_INIT_NO_DEBUG()
     CLOCK_START_NO_DEBUG()

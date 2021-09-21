@@ -26,10 +26,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-#include "cuda_helpers.cuh"
+#include "utils/sequence_reader.h"
+#include "utils/cuda_helpers.cuh"
+#include "utils/logger.h"
 #include "wavefront_structures.h"
-#include "logger.h"
-#include "utils.h"
 
 #define EWAVEFRONT_V(k,offset) ((offset)-(k))
 #define EWAVEFRONT_H(k,offset) (offset)
