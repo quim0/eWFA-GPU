@@ -1,30 +1,51 @@
-# WFA.distance.gpu
+# WFE-GPU
 
-PoC of WFA distance algorithm on GPU
+WFE-GPU is an implementation of the [wavefront alignment algorithm](https://github.com/smarco/WFA)
+(WFA) to accelerate edit distance on GPU devices, producing the full alignment
+CIGAR. It uses optimization techniques to dramatically reduce the amount of
+memory needed by the WFA algorithm, being able to fit more data in the fast
+memories of the GPU. Additionally, compute and memory transfers are fully
+asynchronous and overlapped.
 
-# Install
+## Install
 
-You just need `nvcc` on your PATH. To install the debug version (with verbose output).
+Make sure you have installed an updated [CUDA toolkit](https://developer.nvidia.com/cuda-downloads)
+and `nvcc` is on your PATH.
+
+To compile with alignment correctness checks and debug messages:
 ```
 $ make debug
 ```
 
-To install the "production" version
+To compile with the most performant version (without alignment correctness
+checks):
 ```
-$ make
-```
-
-# Run
-
-Run the binary without arguments to see the options
-
-```
-$ ./wfa.edit.distance.gpu
-Usage:
-WFA_edit_gpu <file> <sequence_length> <num_of_sequences> <batch_size=num_of_sequences>
+$ make all
 ```
 
-* file: File where the sequences are stored
-* sequence_length: length of the sequences (in this version all of them must have the same length)
-* num_of_sequences: Number of alignments (sequences pairs). Usually half the number of lines of the sequences file.
-* batch_size (optional): Size of the batch if you want the alignments to be processed in batches.
+## Usage 
+
+Executing the binary without arguments prints the usage options.
+
+```
+$ ./wfe.aligner
+Options:
+        -f, --file                          (string, required) Sequences file: File containing the sequences to align.
+        -n, --num-alignments                (int, required) Number of alignments: Number of alignments to read from the file (default=all alignments)
+        -l, --seq-len                       (int, required) Sequence length: Maximum sequence length.
+        -b, --batch-size                    (int) Batch size: Number of alignments per batch (default=num-alignments).
+        -t, --cpu-threads                   (int) Number of CPU threads: Number of CPU threads, each CPU thread creates two streams to overlap compute and memory transfers. (default=1)
+```
+
+The program takes as an input file datasets containing pairs of sequences, where
+patterns start with `>` and texts start with `>`.
+
+```
+>TGTGAAGTAATGGACGTTCTATTGGTTAAGAAATGCACCAGCTACAGCAAACTATGAGTCATCCTTTTCCATGTTAAGCCTGGTTCCTAAACACTTCGTGAAGGACGAAACTTATGCACGCGTCTGCCCAACAGAAATCCTTCGTAACCG
+<TGTAAAGTAATGGACGTTCTATTGGTTAAGAAATGCACCAGCTACAGCCAAACTATGAGTCATCCTTTTCCATGTTAAGCCTGGTTCCTAAACACTTCGTGAAGGACGAAACTTATGCACGCGTCTGCCCAACAGAAATCCTTCGTAACCG
+>ACGGGCGTGCATCACAACCCGTGATGATCGCCATAGAGCGAGGGGTGGATATGGAGACCGTGTTGACGGTCTCACATATATTTGGTCTAGCACCTTCCGACATGACTTCGTCCTAATCTTACTCGTCAAAACAAAACAATGACAAGATAA
+<ACGGGCGTGCATCACAACCCGGATGATCGCCATAGAGCCGAGGGGTGGATATGGAGACCGTGTTGACGGTCTCACATATATTTGGTCTAGCACCTTCCGACATGACTTCGATCCTAATCTTACTCGTCAAAACAAAACAATGACAAGATAA
+>ATACCCCCGTCTTATCATACGACCCTAATGCACGCGTTAGGGCGGCTTAAATCCCTCCTATCCCTGATGCCATTTGATGATGAAACTCGTGGCTAAGAAACGCCCAACTGGTCGTCTTTGTCCACCCTGGAAACGCGGGCACCCTCTTAG
+<ATCCCACGTCTTATCATACGACCCTAATGCACGCGTTAGGGCGGCTTAAATCCCTCCTATCCCTGATGCCATTTGATGTGAAACTCGTGGCTAAGAAACGCCCAACTGGTCGTCTTTGTCCACCCTGGAAACGCGGGCACCCTCTTAG
+...
+```
