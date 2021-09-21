@@ -17,6 +17,14 @@ To compile with alignment correctness checks and debug messages:
 $ make debug
 ```
 
+By default, CUDA compute capability 7.0 is used, it can be changed to compile
+for other architectures, this is an example of compiling the binary for compute
+capability 8.0:
+
+```
+$ make SM=80 COMPUTE=80 debug
+```
+
 To compile with the most performant version (without alignment correctness
 checks):
 ```

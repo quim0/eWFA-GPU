@@ -1,7 +1,9 @@
+COMPUTE=70
+SM=70
 NVCC=nvcc
 CC=gcc
 SRC=src/main.cu src/wavefront.cu src/kernels.cu utils/sequence_reader.cu build/*.o
-ARGS=-Isrc/ -I. -gencode arch=compute_70,code=sm_70 -default-stream per-thread
+ARGS=-Isrc/ -I. -gencode arch=compute_$(COMPUTE),code=sm_$(SM) -default-stream per-thread
 BIN=wfe.aligner
 
 all: utils-o
