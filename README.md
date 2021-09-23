@@ -1,6 +1,6 @@
-# WFE-GPU
+# eWFA-GPU
 
-WFE-GPU is an implementation of the [wavefront alignment algorithm](https://github.com/smarco/WFA)
+eWFA-GPU is an implementation of the [wavefront alignment algorithm](https://github.com/smarco/WFA)
 (WFA) to accelerate edit distance on GPU devices, producing the full alignment
 CIGAR. It uses optimization techniques to dramatically reduce the amount of
 memory needed by the WFA algorithm, being able to fit more data in the fast
