@@ -28,12 +28,6 @@
 // TODO: Check max_gpu_size to take in accont the multiple arrays stored on GPU
 bool Sequences::GPU_memory_init () {
     CLOCK_INIT()
-    // Send patterns to GPU
-    size_t req_memory = this->batch_size * sizeof(WF_element);
-    if (req_memory > MAX_GPU_SIZE) {
-        WF_ERROR("Required memory is bigger than available memory in GPU");
-        return false;
-    }
 
     // Start the clock for benchmanrk purposes if DEBUG_MODE is enabled
     CLOCK_START()
@@ -176,8 +170,7 @@ bool Sequences::GPU_prepare_memory_next_batch () {
 }
 
 void Sequences::GPU_launch_wavefront_distance () {
-    // TODO: Determine better the number of threads
-    int threads_x = 64;
+    int threads_x = THREADS_PER_BLOCK;
 
     int blocks_x;
     // Check if the current batch is smaller than "batch_size"

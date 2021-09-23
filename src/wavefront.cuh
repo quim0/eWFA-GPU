@@ -36,10 +36,7 @@
 #define EWAVEFRONT_DIAGONAL(h,v) ((h)-(v))
 #define EWAVEFRONT_OFFSET(h,v)   (h)
 
-// Limit to 8GiB to be safe
-#define MAX_GPU_SIZE (1L << 33)
-
-#define MAX_THREADS_PER_BLOCK 1024
+#define THREADS_PER_BLOCK 64
 #define MAX_BLOCKS 2147483647
 
 class Cigars {
