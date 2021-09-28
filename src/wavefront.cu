@@ -32,6 +32,7 @@ bool Sequences::GPU_memory_init () {
     // Start the clock for benchmanrk purposes if DEBUG_MODE is enabled
     CLOCK_START()
 
+    size_t req_memory = this->batch_size * sizeof(WF_element);
     cudaMalloc((void **) &(this->d_elements), req_memory);
     CUDA_CHECK_ERR;
 
