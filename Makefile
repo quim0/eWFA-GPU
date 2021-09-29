@@ -1,5 +1,5 @@
-COMPUTE=70
 SM=70
+COMPUTE=$(SM)
 NVCC=nvcc
 CC=gcc
 SRC=src/aligner.cu src/wavefront.cu src/kernels.cu utils/sequence_reader.cu build/*.o
