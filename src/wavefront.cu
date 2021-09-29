@@ -19,7 +19,6 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "utils.h"
 #include "wavefront.cuh"
 #include "kernels.cuh"
 
@@ -29,16 +28,11 @@
 // TODO: Check max_gpu_size to take in accont the multiple arrays stored on GPU
 bool Sequences::GPU_memory_init () {
     CLOCK_INIT()
-    // Send patterns to GPU
-    size_t req_memory = this->batch_size * sizeof(WF_element);
-    if (req_memory > MAX_GPU_SIZE) {
-        WF_ERROR("Required memory is bigger than available memory in GPU");
-        return false;
-    }
 
     // Start the clock for benchmanrk purposes if DEBUG_MODE is enabled
     CLOCK_START()
 
+    size_t req_memory = this->batch_size * sizeof(WF_element);
     cudaMalloc((void **) &(this->d_elements), req_memory);
     CUDA_CHECK_ERR;
 
@@ -177,8 +171,7 @@ bool Sequences::GPU_prepare_memory_next_batch () {
 }
 
 void Sequences::GPU_launch_wavefront_distance () {
-    // TODO: Determine better the number of threads
-    int threads_x = 64;
+    int threads_x = THREADS_PER_BLOCK;
 
     int blocks_x;
     // Check if the current batch is smaller than "batch_size"
@@ -215,7 +208,7 @@ void Sequences::GPU_launch_wavefront_distance () {
 }
 
 // Returns false when everything is comple
-bool Sequences::prepare_next_batch () {
+bool Sequences::prepare_next_batch (bool print_cigars) {
     // Async, memset(0) the ascii CIGARs buffer on the device
     this->d_cigars.device_reset_ascii();
 
@@ -296,6 +289,15 @@ bool Sequences::prepare_next_batch () {
     // All ASCII cigars are on host, we can start next iteration
     cudaStreamSynchronize(0);
     CUDA_CHECK_ERR;
+
+    if (print_cigars) {
+        for (int i=0; i<curr_batch_size; i++) {
+            const int curr_position = this->batch_idx * this->batch_size;
+            edit_cigar_t* curr_cigar = this->h_cigars.generate_ascii_cigar(i);
+            printf("%d: %s\n", this->initial_alignment + curr_position + i, curr_cigar);
+            free(curr_cigar);
+        }
+    }
 
 #ifdef DEBUG_MODE
     size_t curr_alignment = (this->batch_idx * this->batch_size) +

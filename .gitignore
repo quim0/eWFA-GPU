@@ -1,1 +1,3 @@
-wfa.edit.distance.gpu
+wfe.aligner
+build/
+.*.swp

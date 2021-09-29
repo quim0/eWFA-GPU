@@ -26,20 +26,18 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-#include "cuda_helpers.cuh"
+#include <stdlib.h>
+#include "utils/sequence_reader.h"
+#include "utils/cuda_helpers.cuh"
+#include "utils/logger.h"
 #include "wavefront_structures.h"
-#include "logger.h"
-#include "utils.h"
 
 #define EWAVEFRONT_V(k,offset) ((offset)-(k))
 #define EWAVEFRONT_H(k,offset) (offset)
 #define EWAVEFRONT_DIAGONAL(h,v) ((h)-(v))
 #define EWAVEFRONT_OFFSET(h,v)   (h)
 
-// Limit to 8GiB to be safe
-#define MAX_GPU_SIZE (1L << 33)
-
-#define MAX_THREADS_PER_BLOCK 1024
+#define THREADS_PER_BLOCK 64
 #define MAX_BLOCKS 2147483647
 
 class Cigars {
@@ -58,7 +56,8 @@ public:
             cudaMemset(this->data, 0, this->cigars_results_size());
             CUDA_CHECK_ERR
 
-            DEBUG("Allocating %zu MiB to store the ASCII CIGAR results on GPU.");
+            DEBUG("Allocating %zu MiB to store the ASCII CIGAR results on GPU.",
+                  this->cigars_size_bytes() / (1 << 20));
             cudaMalloc((void**) &this->cigars_ascii, this->cigars_size_bytes());
             CUDA_CHECK_ERR
             cudaMemset(this->cigars_ascii, 0, this->cigars_size_bytes());
@@ -143,7 +142,48 @@ public:
         return acc;
 	}
 
-    __host__ edit_cigar_t* generate_ascii_cigar (const int n,
+    // Free the return pointer
+    __host__ edit_cigar_t* generate_ascii_cigar (const int n) {
+        edit_cigar_t* original_cigar = this->get_cigar_ascii(n);
+        edit_cigar_t* ascii_cigar = (edit_cigar_t*)calloc(this->cigar_max_len*2,
+                                            sizeof(edit_cigar_t));
+        if (ascii_cigar == NULL) {
+            DEBUG(NOMEM_ERR_STR);
+            return NULL;
+        }
+
+        edit_cigar_t* ascii_cigar_origin = ascii_cigar;
+        const size_t cigar_len = strnlen((char*)original_cigar, this->cigar_max_len);
+
+        constexpr int itoa_buf_size = sizeof(int)*8+1;
+        char itoa_buf[itoa_buf_size] = {0};
+
+        size_t M_to_print = 0;
+        for (int i=0; i<cigar_len; i++) {
+            edit_cigar_t curr_char = original_cigar[i];
+            if (curr_char < 0) {
+                M_to_print += (-curr_char);
+                continue;
+            }
+
+            if (M_to_print > 0) {
+                sprintf(&itoa_buf[0], "%d", curr_char);
+                const size_t M_len = strnlen(itoa_buf, itoa_buf_size);
+                strncpy((char*)ascii_cigar, itoa_buf, M_len);
+                ascii_cigar += M_len;
+                *ascii_cigar = 'M';
+                ascii_cigar++;
+                M_to_print = 0;
+            }
+
+            *ascii_cigar = curr_char;
+            ascii_cigar++;
+        }
+
+        return ascii_cigar_origin;
+    }
+
+    __host__ edit_cigar_t* generate_ascii_cigar_from_bt_vector (const int n,
                                         const SEQ_TYPE* text,
                                         const int text_length,
                                         const SEQ_TYPE* pattern,
@@ -443,7 +483,7 @@ public:
     bool GPU_memory_free ();
     void backtrace ();
     void GPU_launch_wavefront_distance ();
-    bool prepare_next_batch ();
+    bool prepare_next_batch (bool print_cigars);
 
 private:
     bool CPU_read_next_sequences ();

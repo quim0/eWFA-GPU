@@ -19,7 +19,7 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "utils.h"
+#include "sequence_reader.h"
 
 void SequenceReader::initialize_sequences () {
     // Allocate memory for the array that will contain all the elements to

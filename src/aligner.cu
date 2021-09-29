@@ -1,4 +1,4 @@
-/*;
+/*
  * Copyright (c) 2020 Quim Aguado
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
@@ -20,18 +20,18 @@
  */
 
 #include <pthread.h>
-#include "utils.h"
+#include "utils/arg_handler.h"
+#include "utils/sequence_reader.h"
 #include "wavefront.cuh"
 
-const char *USAGE_STR = "Usage:\n"
-                        "WFA_edit_gpu <file> <sequence_length> <num_of_aligments> "
-                        "<batch_size=num_of_sequences>\n";
+#define NUM_ARGUMENTS 6
 
 struct Parameters {
     char* seq_file;
     size_t seq_len;
     size_t num_alignments;
     size_t batch_size;
+    bool print_cigars;
     unsigned int tid;
     unsigned int total_threads;
     const SequenceReader *reader;
@@ -62,7 +62,7 @@ void * worker(void * tdata) {
     seqs.GPU_memory_init();
     do {
         seqs.GPU_launch_wavefront_distance();
-    } while (seqs.prepare_next_batch());
+    } while (seqs.prepare_next_batch(params->print_cigars));
     seqs.GPU_memory_free();
 
     DEBUG("Finished thread %d.", params->tid);
@@ -71,21 +71,105 @@ void * worker(void * tdata) {
 }
 
 int main (int argc, char** argv) {
-    if (argc < 4 || argc > 6) {
-        WF_FATAL(USAGE_STR);
+
+    option_t options_arr[NUM_ARGUMENTS] = {
+        // 0
+        {.name = "Sequences file",
+         .description = "File containing the sequences to align.",
+         .short_arg = 'f',
+         .long_arg = "file",
+         .required = true,
+         .type = ARG_STR
+         },
+        // 1
+        {.name = "Number of alignments",
+         .description = "Number of alignments to read from the file (default=all"
+                        " alignments)",
+         .short_arg = 'n',
+         .long_arg = "num-alignments",
+         .required = true,
+         .type = ARG_INT
+         },
+        // 2
+        {.name = "Sequence length",
+         .description = "Maximum sequence length.",
+         .short_arg = 'l',
+         .long_arg = "seq-len",
+         .required = true,
+         .type = ARG_INT
+         },
+         // 3
+        {.name = "Batch size",
+         .description = "Number of alignments per batch (default=num-alignments).",
+         .short_arg = 'b',
+         .long_arg = "batch-size",
+         .required = false,
+         .type = ARG_INT
+         },
+        // 4
+        {.name = "Number of CPU threads",
+         .description = "Number of CPU threads, each CPU thread creates two "
+                        "streams to overlap compute and memory transfers. "
+                        "(default=1)",
+         .short_arg = 't',
+         .long_arg = "cpu-threads",
+         .required = false,
+         .type = ARG_INT
+         },
+        // 5
+        {.name = "Print CIGARS",
+         .description = "Print CIGARS to stdout",
+         .short_arg = 'p',
+         .long_arg = "print-cigars",
+         .required = false,
+         .type = ARG_NO_VALUE
+         }
+    };
+
+    int deviceCount = 0;
+    cudaGetDeviceCount(&deviceCount);
+    if (deviceCount == 0) {
+        WF_FATAL("No available CUDA devices detected.")
     }
 
-    char* seq_file = argv[1];
-    size_t seq_len = atoi(argv[2]);
-    size_t num_alignments = atoi(argv[3]);
-    size_t batch_size = (argc >= 5) ? atoi(argv[4]) : num_alignments;
-    unsigned int num_threads = (argc == 6) ? atoi(argv[5]) : 1;
+    cudaSetDevice(0);
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, 0);
+    printf("Using device \"%s\", with compute capability %d.%d\n",
+           deviceProp.name, deviceProp.major, deviceProp.minor);
+
+
+    options_t options = {options_arr, NUM_ARGUMENTS};
+    bool success = parse_args(argc, argv, options);
+    if (!success) {
+        print_usage(options);
+        exit(1);
+    }
+
+    char* seq_file = options.options[0].value.str_val;
+    size_t num_alignments = options.options[1].value.int_val;
+    size_t seq_len = options.options[2].value.int_val;
+
+    size_t batch_size = num_alignments;
+    if (options.options[3].parsed) {
+        batch_size = options.options[3].value.int_val;
+    }
+
+    unsigned int num_threads = 1;
+    if (options.options[4].parsed) {
+        num_threads = options.options[4].value.int_val;
+    }
+
+    bool print_cigars = false;
+    if (options.options[5].parsed) {
+        print_cigars = true;
+    }
 
     if (num_threads < 1)
         WF_FATAL("Minimum needed is 1 thread");
 
     if (batch_size > num_alignments)
-        WF_FATAL("batch_size must be >= than the number of alignments.");
+        WF_FATAL("batch_size must be <= than the number of alignments.");
 
     pthread_t *threads = (pthread_t*)calloc(num_threads, sizeof(pthread_t));
     if (threads == NULL)
@@ -110,6 +194,7 @@ int main (int argc, char** argv) {
         params->batch_size = batch_size;
         params->tid = i;
         params->total_threads = num_threads;
+        params->print_cigars = print_cigars;
         params->reader = &reader;
         DEBUG("Launching thread %d", params->tid);
         if (pthread_create(&threads[i], NULL, worker, params))
@@ -123,6 +208,7 @@ int main (int argc, char** argv) {
     params->batch_size = batch_size;
     params->tid = 0;
     params->total_threads = num_threads;
+    params->print_cigars = print_cigars;
     params->reader = &reader;
     worker(params);
 

@@ -1,30 +1,69 @@
-# WFA.distance.gpu
+# eWFA-GPU
 
-PoC of WFA distance algorithm on GPU
+eWFA-GPU is an implementation of the [wavefront alignment algorithm](https://github.com/smarco/WFA)
+(WFA) to accelerate edit distance on GPU devices, producing the full alignment
+CIGAR. It uses optimization techniques to dramatically reduce the amount of
+memory needed by the WFA algorithm, being able to fit more data in the fast
+memories of the GPU. Additionally, compute and memory transfers are fully
+asynchronous and overlapped.
 
-# Install
+## Install
 
-You just need `nvcc` on your PATH. To install the debug version (with verbose output).
+Make sure you have installed an updated [CUDA toolkit](https://developer.nvidia.com/cuda-downloads)
+and `nvcc` is on your PATH.
+
+To compile with alignment correctness checks and debug messages:
 ```
 $ make debug
 ```
 
-To install the "production" version
-```
-$ make
-```
-
-# Run
-
-Run the binary without arguments to see the options
+By default, CUDA compute capability 7.0 is used, it can be changed to compile
+for other architectures, this is an example of compiling the binary for compute
+capability 8.0:
 
 ```
-$ ./wfa.edit.distance.gpu
-Usage:
-WFA_edit_gpu <file> <sequence_length> <num_of_sequences> <batch_size=num_of_sequences>
+$ make SM=80 COMPUTE=80 debug
 ```
 
-* file: File where the sequences are stored
-* sequence_length: length of the sequences (in this version all of them must have the same length)
-* num_of_sequences: Number of alignments (sequences pairs). Usually half the number of lines of the sequences file.
-* batch_size (optional): Size of the batch if you want the alignments to be processed in batches.
+When running the binary, it prints the detected GPU name and its CUDA capability.
+Make sure that you compiled the binary for this capability, otherwise, the
+following error will be raised when trying to align sequences:
+
+```
+Error cudaErrorNoKernelImageForDevice: no kernel image is available for
+execution on the device
+```
+
+To compile with the most performant version (without alignment correctness
+checks):
+```
+$ make all
+```
+
+## Usage 
+
+Executing the binary without arguments prints the usage options.
+
+```
+$ ./wfe.aligner
+Options:
+        -f, --file                          (string, required) Sequences file: File containing the sequences to align.
+        -n, --num-alignments                (int, required) Number of alignments: Number of alignments to read from the file (default=all alignments)
+        -l, --seq-len                       (int, required) Sequence length: Maximum sequence length.
+        -b, --batch-size                    (int) Batch size: Number of alignments per batch (default=num-alignments).
+        -t, --cpu-threads                   (int) Number of CPU threads: Number of CPU threads, each CPU thread creates two streams to overlap compute and memory transfers. (default=1)
+        -p, --print-cigars                  Print CIGARS: Print CIGARS to stdout
+```
+
+The program takes as an input file datasets containing pairs of sequences, where
+patterns start with `>` and texts start with `<`.
+
+```
+>TGTGAAGTAATGGACGTTCTATTGGTTAAGAAATGCACCAGCTACAGCAAACTATGAGTCATCCTTTTCCATGTTAAGCCTGGTTCCTAAACACTTCGTGAAGGACGAAACTTATGCACGCGTCTGCCCAACAGAAATCCTTCGTAACCG
+<TGTAAAGTAATGGACGTTCTATTGGTTAAGAAATGCACCAGCTACAGCCAAACTATGAGTCATCCTTTTCCATGTTAAGCCTGGTTCCTAAACACTTCGTGAAGGACGAAACTTATGCACGCGTCTGCCCAACAGAAATCCTTCGTAACCG
+>ACGGGCGTGCATCACAACCCGTGATGATCGCCATAGAGCGAGGGGTGGATATGGAGACCGTGTTGACGGTCTCACATATATTTGGTCTAGCACCTTCCGACATGACTTCGTCCTAATCTTACTCGTCAAAACAAAACAATGACAAGATAA
+<ACGGGCGTGCATCACAACCCGGATGATCGCCATAGAGCCGAGGGGTGGATATGGAGACCGTGTTGACGGTCTCACATATATTTGGTCTAGCACCTTCCGACATGACTTCGATCCTAATCTTACTCGTCAAAACAAAACAATGACAAGATAA
+>ATACCCCCGTCTTATCATACGACCCTAATGCACGCGTTAGGGCGGCTTAAATCCCTCCTATCCCTGATGCCATTTGATGATGAAACTCGTGGCTAAGAAACGCCCAACTGGTCGTCTTTGTCCACCCTGGAAACGCGGGCACCCTCTTAG
+<ATCCCACGTCTTATCATACGACCCTAATGCACGCGTTAGGGCGGCTTAAATCCCTCCTATCCCTGATGCCATTTGATGTGAAACTCGTGGCTAAGAAACGCCCAACTGGTCGTCTTTGTCCACCCTGGAAACGCGGGCACCCTCTTAG
+...
+```
