@@ -1,4 +1,4 @@
-/*;
+/*
  * Copyright (c) 2020 Quim Aguado
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
@@ -24,13 +24,14 @@
 #include "utils/sequence_reader.h"
 #include "wavefront.cuh"
 
-#define NUM_ARGUMENTS 5
+#define NUM_ARGUMENTS 6
 
 struct Parameters {
     char* seq_file;
     size_t seq_len;
     size_t num_alignments;
     size_t batch_size;
+    bool print_cigars;
     unsigned int tid;
     unsigned int total_threads;
     const SequenceReader *reader;
@@ -61,7 +62,7 @@ void * worker(void * tdata) {
     seqs.GPU_memory_init();
     do {
         seqs.GPU_launch_wavefront_distance();
-    } while (seqs.prepare_next_batch());
+    } while (seqs.prepare_next_batch(params->print_cigars));
     seqs.GPU_memory_free();
 
     DEBUG("Finished thread %d.", params->tid);
@@ -116,24 +117,13 @@ int main (int argc, char** argv) {
          .type = ARG_INT
          },
         // 5
-        /*
-        {.name = "Check",
-         .description = "Check for alignment correctness",
-         .short_arg = 'c',
-         .long_arg = "check",
+        {.name = "Print CIGARS",
+         .description = "Print CIGARS to stdout",
+         .short_arg = 'p',
+         .long_arg = "print-cigars",
          .required = false,
          .type = ARG_NO_VALUE
-         },
-        // 6
-        {.name = "Maximum distance allowed",
-         .description = "Maximum distance that the kernel will be able to "
-                        "compute (32, 64, or 128).",
-         .short_arg = 'd',
-         .long_arg = "max-distance",
-         .required = true,
-         .type = ARG_INT
-         },
-         */
+         }
     };
 
     int deviceCount = 0;
@@ -159,13 +149,20 @@ int main (int argc, char** argv) {
     char* seq_file = options.options[0].value.str_val;
     size_t num_alignments = options.options[1].value.int_val;
     size_t seq_len = options.options[2].value.int_val;
+
     size_t batch_size = num_alignments;
     if (options.options[3].parsed) {
         batch_size = options.options[3].value.int_val;
     }
+
     unsigned int num_threads = 1;
     if (options.options[4].parsed) {
         num_threads = options.options[4].value.int_val;
+    }
+
+    bool print_cigars = false;
+    if (options.options[5].parsed) {
+        print_cigars = true;
     }
 
     if (num_threads < 1)
@@ -197,6 +194,7 @@ int main (int argc, char** argv) {
         params->batch_size = batch_size;
         params->tid = i;
         params->total_threads = num_threads;
+        params->print_cigars = print_cigars;
         params->reader = &reader;
         DEBUG("Launching thread %d", params->tid);
         if (pthread_create(&threads[i], NULL, worker, params))
@@ -210,6 +208,7 @@ int main (int argc, char** argv) {
     params->batch_size = batch_size;
     params->tid = 0;
     params->total_threads = num_threads;
+    params->print_cigars = print_cigars;
     params->reader = &reader;
     worker(params);
 
