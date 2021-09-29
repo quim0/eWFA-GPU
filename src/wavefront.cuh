@@ -26,20 +26,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-#include "cuda_helpers.cuh"
+#include "utils/sequence_reader.h"
+#include "utils/cuda_helpers.cuh"
+#include "utils/logger.h"
 #include "wavefront_structures.h"
-#include "logger.h"
-#include "utils.h"
 
 #define EWAVEFRONT_V(k,offset) ((offset)-(k))
 #define EWAVEFRONT_H(k,offset) (offset)
 #define EWAVEFRONT_DIAGONAL(h,v) ((h)-(v))
 #define EWAVEFRONT_OFFSET(h,v)   (h)
 
-// Limit to 8GiB to be safe
-#define MAX_GPU_SIZE (1L << 33)
-
-#define MAX_THREADS_PER_BLOCK 1024
+#define THREADS_PER_BLOCK 64
 #define MAX_BLOCKS 2147483647
 
 class Cigars {
@@ -58,7 +55,8 @@ public:
             cudaMemset(this->data, 0, this->cigars_results_size());
             CUDA_CHECK_ERR
 
-            DEBUG("Allocating %zu MiB to store the ASCII CIGAR results on GPU.");
+            DEBUG("Allocating %zu MiB to store the ASCII CIGAR results on GPU.",
+                  this->cigars_size_bytes() / (1 << 20));
             cudaMalloc((void**) &this->cigars_ascii, this->cigars_size_bytes());
             CUDA_CHECK_ERR
             cudaMemset(this->cigars_ascii, 0, this->cigars_size_bytes());

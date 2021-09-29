@@ -25,8 +25,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "wavefront_structures.h"
 #include "logger.h"
+#include "wavefront_structures.h"
 
 // TODO: Method to free the sequences memory
 class SequenceReader {
