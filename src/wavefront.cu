@@ -208,7 +208,7 @@ void Sequences::GPU_launch_wavefront_distance () {
 }
 
 // Returns false when everything is comple
-bool Sequences::prepare_next_batch () {
+bool Sequences::prepare_next_batch (bool print_cigars) {
     // Async, memset(0) the ascii CIGARs buffer on the device
     this->d_cigars.device_reset_ascii();
 
@@ -289,6 +289,15 @@ bool Sequences::prepare_next_batch () {
     // All ASCII cigars are on host, we can start next iteration
     cudaStreamSynchronize(0);
     CUDA_CHECK_ERR;
+
+    if (print_cigars) {
+        for (int i=0; i<curr_batch_size; i++) {
+            const int curr_position = this->batch_idx * this->batch_size;
+            edit_cigar_t* curr_cigar = this->h_cigars.generate_ascii_cigar(i);
+            printf("%d: %s\n", this->initial_alignment + curr_position + i, curr_cigar);
+            free(curr_cigar);
+        }
+    }
 
 #ifdef DEBUG_MODE
     size_t curr_alignment = (this->batch_idx * this->batch_size) +

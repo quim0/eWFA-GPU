@@ -52,10 +52,11 @@ Options:
         -l, --seq-len                       (int, required) Sequence length: Maximum sequence length.
         -b, --batch-size                    (int) Batch size: Number of alignments per batch (default=num-alignments).
         -t, --cpu-threads                   (int) Number of CPU threads: Number of CPU threads, each CPU thread creates two streams to overlap compute and memory transfers. (default=1)
+        -p, --print-cigars                  Print CIGARS: Print CIGARS to stdout
 ```
 
 The program takes as an input file datasets containing pairs of sequences, where
-patterns start with `>` and texts start with `>`.
+patterns start with `>` and texts start with `<`.
 
 ```
 >TGTGAAGTAATGGACGTTCTATTGGTTAAGAAATGCACCAGCTACAGCAAACTATGAGTCATCCTTTTCCATGTTAAGCCTGGTTCCTAAACACTTCGTGAAGGACGAAACTTATGCACGCGTCTGCCCAACAGAAATCCTTCGTAACCG
