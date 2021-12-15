@@ -79,7 +79,9 @@ int main (int argc, char** argv) {
          .short_arg = 'f',
          .long_arg = "file",
          .required = true,
-         .type = ARG_STR
+         .parsed = false,
+         .type = ARG_STR,
+         .value = {0}
          },
         // 1
         {.name = "Number of alignments",
@@ -88,7 +90,9 @@ int main (int argc, char** argv) {
          .short_arg = 'n',
          .long_arg = "num-alignments",
          .required = true,
-         .type = ARG_INT
+         .parsed = false,
+         .type = ARG_INT,
+         .value = {0}
          },
         // 2
         {.name = "Sequence length",
@@ -96,7 +100,9 @@ int main (int argc, char** argv) {
          .short_arg = 'l',
          .long_arg = "seq-len",
          .required = true,
-         .type = ARG_INT
+         .parsed = false,
+         .type = ARG_INT,
+         .value = {0}
          },
          // 3
         {.name = "Batch size",
@@ -104,7 +110,9 @@ int main (int argc, char** argv) {
          .short_arg = 'b',
          .long_arg = "batch-size",
          .required = false,
-         .type = ARG_INT
+         .parsed = false,
+         .type = ARG_INT,
+         .value = {0}
          },
         // 4
         {.name = "Number of CPU threads",
@@ -114,7 +122,9 @@ int main (int argc, char** argv) {
          .short_arg = 't',
          .long_arg = "cpu-threads",
          .required = false,
-         .type = ARG_INT
+         .parsed = false,
+         .type = ARG_INT,
+         .value = {0}
          },
         // 5
         {.name = "Print CIGARS",
@@ -122,7 +132,9 @@ int main (int argc, char** argv) {
          .short_arg = 'p',
          .long_arg = "print-cigars",
          .required = false,
-         .type = ARG_NO_VALUE
+         .parsed = false,
+         .type = ARG_NO_VALUE,
+         .value = {0}
          }
     };
 
