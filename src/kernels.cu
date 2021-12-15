@@ -514,8 +514,8 @@ __global__ void generate_cigars (const SEQ_TYPE* const sequences,
                 default:
                     printf("(tid %d) Incorrect backtrace operations vector! "
                            "This is a bug in the code and should not happen"
-                           " d: %d, distance: %d, k: %d, offset: %d, op: %d"
-                           " packed_bt: %xl, %xl\n",
+                           " d: %d, distance: %d, k: %d, offset: %d, op: %zu"
+                           " packed_bt: %lx, %lx\n",
                            tid, d, distance, curr_k, curr_off_value, op,
                            packed_bt->words[0], packed_bt->words[1]);
                     return;
@@ -625,8 +625,8 @@ __global__ void generate_cigars_sh_mem (const SEQ_TYPE* const sequences,
                 default:
                     printf("(tid %d) Incorrect backtrace operations vector! "
                            "This is a bug in the code and should not happen"
-                           " d: %d, distance: %d, k: %d, offset: %d, op: %d"
-                           " packed_bt: %xl, %xl\n",
+                           " d: %d, distance: %d, k: %d, offset: %d, op: %zu"
+                           " packed_bt: %lx, %lx\n",
                            tid, d, distance, curr_k, curr_off_value, op,
                            packed_bt->words[0], packed_bt->words[1]);
                     return;
